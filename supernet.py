@@ -25,20 +25,19 @@ class Supernets(nn.Module):
         self._redundant_modules = None
         self._unused_modules = None
 
-        input_channel = make_divisible(32 * width_mult, 8)
-        first_cell_width = make_divisible(16 * width_mult, 8)
-        for i in range(len(width_stages)):
-            width_stages[i] = make_divisible(width_stages[i] * width_mult, 8)
-
         # first conv layer
         first_conv = nn.Sequential(
-            nn.Conv2d(3, input_channel, 3, stride=2),
-            nn.BatchNorm2d(input_channel),
+            nn.Conv2d(3, 32, 3, stride=2),
+            nn.BatchNorm2d(32),
             nn.ReLU6()
         )
 
         #blocks
-        first_block_conv = MixedEdge(OPS[2], input_channel, first_cell_width, 1, 'weight_bn_act')
+        input_channel = 32
+        first_cell_width = make_divisible(16 * width_mult, 8)
+
+        first_block_conv = MixedEdge(
+            OPS['3x3_MBConv1'](input_channel, first_cell_width, 1))
         if first_block_conv.n_choices == 1:
             first_block_conv = first_block_conv.candidate_ops[0]
         first_block = MobileInvertedResidualBlock(first_block_conv, None)

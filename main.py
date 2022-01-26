@@ -23,12 +23,12 @@ classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 super_net = Supernets( # over-parameterized net 생성 (큰 net)
-    width_stages='24,40,80,96,192,320', n_cell_stages='4,4,4,4,4,1', stride_stages='2,2,2,1,2,1',
+    width_stages=[24,40,80,96,192,320], n_cell_stages=[4,4,4,4,4,1], stride_stages=[2,2,2,1,2,1],
     conv_candidates=[
         '3x3_MBConv3', '3x3_MBConv6',
         '5x5_MBConv3', '5x5_MBConv6',
         '7x7_MBConv3', '7x7_MBConv6',
-    ], n_classes=10, width_mult=1.0,
+    ], n_classes=10, width_mult=1,
     bn_param=(0.1, 1e-3), dropout_rate=0
 )
 
