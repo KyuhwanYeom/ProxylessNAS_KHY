@@ -1,39 +1,31 @@
 import numpy as np
-
+import torch
 from torch.nn.parameter import Parameter
 import torch.nn.functional as F
 
-from modules.layers import *
+from layers import *
 
+OPS = {
+    'Identity': lambda in_C, out_C, S: Identity(in_C, out_C),
+    'Zero': lambda in_C, out_C, S: Zero(stride=S),
+    '3x3_MBConv1': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 1),
+    '3x3_MBConv3': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 3),
+    '3x3_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 6),
+    #######################################################################################
+    '5x5_MBConv3': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 5, S, 3),
+    '5x5_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 5, S, 6),
+    #######################################################################################
+    '7x7_MBConv3': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 7, S, 3),
+    '7x7_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 7, S, 6),
+}
 
 def build_candidate_ops(candidate_ops, in_channels, out_channels, stride, ops_order):
-    if candidate_ops is None:
-        raise ValueError('please specify a candidate set')
-
-    name2ops = {
-        'Identity': lambda in_C, out_C, S: IdentityLayer(in_C, out_C, ops_order=ops_order),
-        'Zero': lambda in_C, out_C, S: ZeroLayer(stride=S),
-    }
-    # add MBConv layers
-    name2ops.update({
-        '3x3_MBConv1': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 1),
-        '3x3_MBConv3': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 3),
-        '3x3_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 6),
-        #######################################################################################
-        '5x5_MBConv3': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 5, S, 3),
-        '5x5_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 5, S, 6),
-        #######################################################################################
-        '7x7_MBConv3': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 7, S, 3),
-        '7x7_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 7, S, 6),
-    })
     return [
-        name2ops[name](in_channels, out_channels, stride) for name in candidate_ops
+        OPS[name](in_channels, out_channels, stride) for name in candidate_ops
     ]
 
 
-class MixedEdge(MyModule):
-    MODE = None  # full, two, None, full_v2
-
+class MixedEdge(nn.Module):
     def __init__(self, candidate_ops):
         super(MixedEdge, self).__init__()
 
@@ -95,14 +87,13 @@ class MixedEdge(MyModule):
     """ """
 
     def forward(self, x): # 여기가 forward!
-        if MixedEdge.MODE == 'full' or MixedEdge.MODE == 'two':
-            output = 0
-            for _i in self.active_index: 
-                oi = self.candidate_ops[_i](x)
-                output = output + self.AP_path_wb[_i] * oi
-            for _i in self.inactive_index:
-                oi = self.candidate_ops[_i](x)
-                output = output + self.AP_path_wb[_i] * oi.detach()
+        output = 0
+        for _i in self.active_index: 
+            oi = self.candidate_ops[_i](x)
+            output = output + self.AP_path_wb[_i] * oi
+        for _i in self.inactive_index:
+            oi = self.candidate_ops[_i](x)
+            output = output + self.AP_path_wb[_i] * oi.detach()
         return output
 
     @property
