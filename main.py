@@ -2,6 +2,7 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 import torch.optim as optim
+import math
 
 from supernet import *
 
@@ -21,6 +22,8 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=1000,
 
 classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+n_cell = 22
+model_init = 'he_fout'
 
 super_net = Supernets( # over-parameterized net 생성 (큰 net)
     width_stages=[24,40,80,96,192,320], n_cell_stages=[4,4,4,4,4,1], stride_stages=[2,2,2,1,2,1],
@@ -32,6 +35,34 @@ super_net = Supernets( # over-parameterized net 생성 (큰 net)
     bn_param=(0.1, 1e-3), dropout_rate=0
 )
 
+for m in super_net.modules(): # m은 각종 layer (Conv, BatchNorm, Linear ...)
+            if isinstance(m, nn.Conv2d): # conv layer면
+                if model_init == 'he_fout': # He initialization?
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                    m.weight.data.normal_(0, math.sqrt(2. / n))
+                elif model_init == 'he_fin':
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
+                    m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d): # batch norm이면 weight = 1, bias = 0
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear): # linear면 weight = uniform, bias = 0
+                stdv = 1. / math.sqrt(m.weight.size(1))
+                m.weight.data.uniform_(-stdv, stdv)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm1d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+criterion = nn.CrossEntropyLoss() # loss 정의
+optimizer_weight = optim.SGD(super_net.parameters(), lr=0.001, momentum=0.9) # weight optimizer 정의 (momentum-SGD)
+
+weight = [[] for i in range(n_cell)] # init architecture parameter
+for i in range(n_cell):
+    weight[i] = [0 for j in range(len(n_cell[i]))] 
+optimizer_arch = optim.Adam(super_net.parameters(), lr=1e-3, momentum=0.9) # architecture parameter (Adam)
+                
 nBatch = len(trainloader)
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') # gpu 사용
@@ -39,9 +70,6 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') # gpu �
 
 super_net.to(device)
 
-criterion = nn.CrossEntropyLoss()
-optimizer_weight = optim.SGD(super_net.parameters(), lr=0.001, momentum=0.9)
-optimizer_arch = optim.Adam(super_net.parameters(), lr=1e-3, momentum=0.9)
 
 for epoch in range(50):
     running_loss = 0.0
