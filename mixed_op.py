@@ -36,9 +36,6 @@ class MixedEdge(nn.Module):
         self.active_index = [0]
         self.inactive_index = None
 
-        self.log_prob = None
-        self.current_prob_over_ops = None
-
     @property
     def n_choices(self):
         return len(self.candidate_ops)
@@ -118,23 +115,20 @@ class MixedEdge(nn.Module):
         return flops, self.forward(x)
 
     """ """
-
+    
     def binarize(self):
         """ prepare: active_index, inactive_index, AP_path_wb, log_prob (optional), current_prob_over_ops (optional) """
         self.log_prob = None
         # reset binary gates
         self.AP_path_wb.data.zero_()
         # binarize according to probs
-        probs = self.probs_over_ops
+        probs = F.softmax(self.AP_path_alpha, dim=0)
         if MixedEdge.MODE == 'two':
             # sample two ops according to `probs`
             sample_op = torch.multinomial(probs.data, 2, replacement=False)
             probs_slice = F.softmax(torch.stack([
                 self.AP_path_alpha[idx] for idx in sample_op
             ]), dim=0)
-            self.current_prob_over_ops = torch.zeros_like(probs)
-            for i, idx in enumerate(sample_op):
-                self.current_prob_over_ops[idx] = probs_slice[i]
             # chose one to be active and the other to be inactive according to probs_slice
             c = torch.multinomial(probs_slice.data, 1)[0]  # 0 or 1
             active_op = sample_op[c].item()
@@ -143,19 +137,6 @@ class MixedEdge(nn.Module):
             self.inactive_index = [inactive_op]
             # set binary gate
             self.AP_path_wb.data[active_op] = 1.0
-        else:
-            sample = torch.multinomial(probs.data, 1)[0].item()
-            self.active_index = [sample]
-            self.inactive_index = [_i for _i in range(0, sample)] + \
-                                  [_i for _i in range(sample + 1, self.n_choices)]
-            self.log_prob = torch.log(probs[sample])
-            self.current_prob_over_ops = probs
-            # set binary gate
-            self.AP_path_wb.data[sample] = 1.0
-        # avoid over-regularization
-        for _i in range(self.n_choices):
-            for name, param in self.candidate_ops[_i].named_parameters():
-                param.grad = None
 
     def set_arch_param_grad(self):
         binary_grads = self.AP_path_wb.grad.data  # ∂L/∂g (모든 path에 대한 gardient 구함)

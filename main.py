@@ -5,6 +5,7 @@ import torch.optim as optim
 import math
 
 from supernet import *
+#from train import *
 
 transform = transforms.Compose(
     [transforms.ToTensor(),
@@ -22,7 +23,7 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=1000,
 
 classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-n_cell = 22
+n_cell = 18
 model_init = 'he_fout'
 
 super_net = Supernets( # over-parameterized net 생성 (큰 net)
@@ -56,20 +57,30 @@ for m in super_net.modules(): # m은 각종 layer (Conv, BatchNorm, Linear ...)
                 m.bias.data.zero_()
 
 criterion = nn.CrossEntropyLoss() # loss 정의
-optimizer_weight = optim.SGD(super_net.parameters(), lr=0.001, momentum=0.9) # weight optimizer 정의 (momentum-SGD)
 
-weight = [[] for i in range(n_cell)] # init architecture parameter
-for i in range(n_cell):
-    weight[i] = [0 for j in range(len(n_cell[i]))] 
-optimizer_arch = optim.Adam(super_net.parameters(), lr=1e-3, momentum=0.9) # architecture parameter (Adam)
+arch_params = [] # init architecture parameter ,weight parameter
+weight_params = []
+for x in super_net.named_parameters():
+    print(x)
+    if 'alpha' in x[0]:
+        arch_params.append(x[1])
+    else:
+        weight_params.append(x[1])
+        
+optimizer_weight = optim.SGD(weight_params, lr=0.001, momentum=0.9) # weight optimizer 정의 (momentum-SGD)
+optimizer_arch = optim.Adam(arch_params, lr=1e-3) # architecture parameter optimizer 정의 (Adam)
                 
 nBatch = len(trainloader)
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') # gpu 사용
 # print(device)
-
 super_net.to(device)
 
+for m in super_net.modules():
+    print(m)
+    
+warm_up(super_net, trainloader, optimizer_weight)
+train(super_net, trainloader)
 
 for epoch in range(50):
     running_loss = 0.0
