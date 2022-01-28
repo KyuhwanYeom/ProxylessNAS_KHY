@@ -18,6 +18,7 @@ class MobileInvertedResidualBlock(nn.Module):
             skip = x
         return self.mobile_inverted_conv(x) + skip
 
+
 class Supernets(nn.Module):
 
     def __init__(self, width_stages, n_cell_stages, conv_candidates, stride_stages,
@@ -25,6 +26,7 @@ class Supernets(nn.Module):
         super().__init__()
         self._redundant_modules = None
         self._unused_modules = None
+        self.label_smoothing = True
 
         # first conv layer
         self.first_conv = nn.Sequential(
@@ -33,7 +35,7 @@ class Supernets(nn.Module):
             nn.ReLU6()
         )
 
-        #blocks
+        # blocks
         input_channel = 32
         first_cell_width = make_divisible(16 * width_mult, 8)
 
@@ -53,7 +55,7 @@ class Supernets(nn.Module):
 
         # Linear Classifier
         self.classifier = nn.Linear(400, 10)
-    
+
     def reset_binary_gates(self):
         for m in self.modules():
             m.binarize()
@@ -63,12 +65,12 @@ class Supernets(nn.Module):
         for m in self.redundant_modules:
             unused = {}
             involved_index = m.active_index + m.inactive_index
-            for i in range(m.n_choices): # n_choices : candiate path의 개수
+            for i in range(m.n_choices):  # n_choices : candiate path의 개수
                 if i not in involved_index:
                     unused[i] = m.candidate_ops[i]
                     m.candidate_ops[i] = None
             self._unused_modules.append(unused)
-    
+
     def unused_modules_back(self):
         if self._unused_modules is None:
             return

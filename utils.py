@@ -1,3 +1,7 @@
+import torch
+import torch.nn as nn
+
+
 def make_divisible(v, divisor, min_val=None):
     """
     This function is taken from the original tf repo.
@@ -17,6 +21,7 @@ def make_divisible(v, divisor, min_val=None):
         new_v += divisor
     return new_v
 
+
 def accuracy(output, target, topk=(1,)):
     """ Computes the precision@k for the specified values of k """
     maxk = max(topk)
@@ -31,6 +36,20 @@ def accuracy(output, target, topk=(1,)):
         correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
         res.append(correct_k.mul_(100.0 / batch_size))
     return res
+
+
+def cross_entropy_with_label_smoothing(pred, target, label_smoothing=0.1):
+    logsoftmax = nn.LogSoftmax()
+    n_classes = pred.size(1)
+    # convert to one-hot
+    target = torch.unsqueeze(target, 1)
+    soft_target = torch.zeros_like(pred)
+    soft_target.scatter_(1, target, 1)
+    # label smoothing
+    soft_target = soft_target * \
+        (1 - label_smoothing) + label_smoothing / n_classes
+    return torch.mean(torch.sum(- soft_target * logsoftmax(pred), 1))
+
 
 class AverageMeter(object):
     """
@@ -55,5 +74,3 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
-        
-        

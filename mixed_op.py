@@ -19,6 +19,7 @@ OPS = {
     '7x7_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 7, S, 6),
 }
 
+
 def build_candidate_ops(candidate_ops, in_channels, out_channels, stride, ops_order):
     return [
         OPS[name](in_channels, out_channels, stride) for name in candidate_ops
@@ -30,8 +31,10 @@ class MixedEdge(nn.Module):
         super(MixedEdge, self).__init__()
 
         self.candidate_ops = nn.ModuleList(candidate_ops)
-        self.AP_path_alpha = Parameter(torch.Tensor(self.n_choices))  # architecture parameters
-        self.AP_path_wb = Parameter(torch.Tensor(self.n_choices))  # binary gates
+        self.AP_path_alpha = Parameter(torch.Tensor(
+            self.n_choices))  # architecture parameters
+        self.AP_path_wb = Parameter(
+            torch.Tensor(self.n_choices))  # binary gates
 
         self.active_index = [0]
         self.inactive_index = None
@@ -41,7 +44,7 @@ class MixedEdge(nn.Module):
         return len(self.candidate_ops)
 
     @property
-    def probs_over_ops(self): # probs는 배열이 됨
+    def probs_over_ops(self):  # probs는 배열이 됨
         probs = F.softmax(self.AP_path_alpha, dim=0)  # softmax to probability
         return probs
 
@@ -75,17 +78,19 @@ class MixedEdge(nn.Module):
         """ assume only one path is active """
         return self.candidate_ops[self.active_index[0]]
 
-    def set_chosen_op_active(self): # validate 할 때 쓰임 (맨마지막!!!!!)
+    def set_chosen_op_active(self):  # validate 할 때 쓰임 (맨마지막!!!!!)
         chosen_idx, _ = self.chosen_index
-        self.active_index = [chosen_idx]  # inactive_index는 active index 제외 모두 (validate 이전의 초기화 부분에서는 inactive_index도 단 한개!)
+        # inactive_index는 active index 제외 모두 (validate 이전의 초기화 부분에서는 inactive_index도 단 한개!)
+        self.active_index = [chosen_idx]
         self.inactive_index = [_i for _i in range(0, chosen_idx)] + \
-                              [_i for _i in range(chosen_idx + 1, self.n_choices)]
+                              [_i for _i in range(
+                                  chosen_idx + 1, self.n_choices)]
 
     """ """
 
-    def forward(self, x): # 여기가 forward!
+    def forward(self, x):  # 여기가 forward!
         output = 0
-        for _i in self.active_index: 
+        for _i in self.active_index:
             oi = self.candidate_ops[_i](x)
             output = output + self.AP_path_wb[_i] * oi
         for _i in self.inactive_index:
@@ -115,7 +120,7 @@ class MixedEdge(nn.Module):
         return flops, self.forward(x)
 
     """ """
-    
+
     def binarize(self):
         """ prepare: active_index, inactive_index, AP_path_wb, log_prob (optional), current_prob_over_ops (optional) """
         self.log_prob = None
@@ -139,7 +144,8 @@ class MixedEdge(nn.Module):
             self.AP_path_wb.data[active_op] = 1.0
 
     def set_arch_param_grad(self):
-        binary_grads = self.AP_path_wb.grad.data  # ∂L/∂g (모든 path에 대한 gardient 구함)
+        # ∂L/∂g (모든 path에 대한 gardient 구함)
+        binary_grads = self.AP_path_wb.grad.data
         if self.active_op.is_zero_layer():
             self.AP_path_alpha.grad = None
             return
@@ -155,32 +161,42 @@ class MixedEdge(nn.Module):
                     origin_i = involved_idx[i]
                     origin_j = involved_idx[j]
                     self.AP_path_alpha.grad.data[origin_i] += \
-                        binary_grads[origin_j] * probs_slice[j] * (delta_ij(i, j) - probs_slice[i])
+                        binary_grads[origin_j] * probs_slice[j] * \
+                        (delta_ij(i, j) - probs_slice[i])
             for _i, idx in enumerate(self.active_index):
-                self.active_index[_i] = (idx, self.AP_path_alpha.data[idx].item()) # ex) self.active_index[0] = (3, 0.14301)
+                # ex) self.active_index[0] = (3, 0.14301)
+                self.active_index[_i] = (
+                    idx, self.AP_path_alpha.data[idx].item())
             for _i, idx in enumerate(self.inactive_index):
-                self.inactive_index[_i] = (idx, self.AP_path_alpha.data[idx].item()) # ex) self.inactive_index[0] = (1, 0.2313)
+                # ex) self.inactive_index[0] = (1, 0.2313)
+                self.inactive_index[_i] = (
+                    idx, self.AP_path_alpha.data[idx].item())
         else:
             probs = self.probs_over_ops.data
             for i in range(self.n_choices):
                 for j in range(self.n_choices):
-                    self.AP_path_alpha.grad.data[i] += binary_grads[j] * probs[j] * (delta_ij(i, j) - probs[i])
+                    self.AP_path_alpha.grad.data[i] += binary_grads[j] * \
+                        probs[j] * (delta_ij(i, j) - probs[i])
         return
 
     def rescale_updated_arch_param(self):
-        if not isinstance(self.active_index[0], tuple): # ex) self.active_index[0] = (3, 0.14301)
+        # ex) self.active_index[0] = (3, 0.14301)
+        if not isinstance(self.active_index[0], tuple):
             assert self.active_op.is_zero_layer()
             return
-        involved_idx = [idx for idx, _ in (self.active_index + self.inactive_index)] # ex) [3, 1]
-        old_alphas = [alpha for _, alpha in (self.active_index + self.inactive_index)] # ex) [0.14301, 0.2313]
-        
+        involved_idx = [idx for idx, _ in (
+            self.active_index + self.inactive_index)]  # ex) [3, 1]
+        # ex) [0.14301, 0.2313]
+        old_alphas = [alpha for _, alpha in (
+            self.active_index + self.inactive_index)]
+
         # ex) [tensor(0.1400), tensor(0.1200)] when AP_path_alpha = Parameter(torch.Tensor([0.1, 0.12, 0.13, 0.14]))
         new_alphas = [self.AP_path_alpha.data[idx] for idx in involved_idx]
 
         offset = math.log(
-            sum([math.exp(alpha) for alpha in new_alphas]) / sum([math.exp(alpha) for alpha in old_alphas])
+            sum([math.exp(alpha) for alpha in new_alphas]) /
+            sum([math.exp(alpha) for alpha in old_alphas])
         )
 
         for idx in involved_idx:
             self.AP_path_alpha.data[idx] -= offset
-
