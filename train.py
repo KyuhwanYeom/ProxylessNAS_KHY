@@ -68,29 +68,27 @@ class train():
                 # measure elapsed time
                 batch_time.update(time.time() - end)
                 end = time.time()
-                if i % 2000 == 1999:    # print every 2000 mini-batches
-                    print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
-                    running_loss = 0.0
 
             warmup = epoch + 1 < warmup_epochs
+            batch_log = 'Warmup Train [{0}][{1}/{2}]\t' \
+                'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t' \
+                'Data {data_time.val:.3f} ({data_time.avg:.3f})\t' \
+                'Loss {losses.val:.4f} ({losses.avg:.4f})\t' \
+                'Top-1 acc {top1.val:.3f} ({top1.avg:.3f})\t' \
+                'Top-5 acc {top5.val:.3f} ({top5.avg:.3f})\tlr {lr:.5f}'. \
+                format(epoch + 1, i, nBatch - 1, batch_time=batch_time, data_time=data_time,
+                       losses=losses, top1=top1, top5=top5, lr=warmup_lr)
+            print(batch_log)
 
             state_dict = self.net.state_dict()
             # rm architecture parameters & binary gates
             for key in list(state_dict.keys()):
                 if 'AP_path_alpha' in key or 'AP_path_wb' in key:
                     state_dict.pop(key)
-            checkpoint = {
-                'state_dict': state_dict,
-                'warmup': warmup,
-            }
-            if warmup:
-                checkpoint['warmup_epoch'] = epoch,
-            self.run_manager.save_model(checkpoint, model_name='warmup.pth.tar')
 
 
     def train(self, warmup=0, warmup_epochs=25):
         nBatch = len(self.trainloader)
-        update_schedule = arch_search_config.get_update_schedule(nBatch)
         # 0 ~ 120 (n_epochs = 120)
         for epoch in range(0, 120):
             print('\n', '-' * 30, 'Train epoch: %d' %
@@ -135,11 +133,10 @@ class train():
                 self.net.unused_modules_back()
                 # skip architecture parameter updates in the first epoch
                 if epoch > 0:
-                    # update architecture parameters according to update_schedule
-                    for j in range(update_schedule.get(i, 0)):
-                        start_time = time.time()
-                        arch_loss = gradient_step(self.net)  # gradient update
-                        used_time = time.time() - start_time
+                    # update architecture parameters
+                    start_time = time.time()
+                    arch_loss = self.gradient_step(self.net, self.optimizer_alpha)  # gradient update
+                    used_time = time.time() - start_time
                 # measure elapsed time
                 batch_time.update(time.time() - end)
                 end = time.time()
