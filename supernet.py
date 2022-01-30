@@ -12,7 +12,7 @@ class MobileInvertedResidualBlock(nn.Module):
         self.shortcut = shortcut
 
     def forward(self, x):
-        if self.shortcut is None:
+        if self.shortcut is False:
             skip = 0
         else:
             skip = x
@@ -21,43 +21,81 @@ class MobileInvertedResidualBlock(nn.Module):
 
 class Supernets(nn.Module):
 
-    def __init__(self, width_stages, n_cell_stages, conv_candidates, stride_stages,
-                 n_classes=10, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0):
-        super().__init__()
+    def __init__(self, output_channels, conv_candidates,
+                 n_classes=10, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0, n_cell = 3):
+        super(Supernets, self).__init__()
         self._redundant_modules = None
         self._unused_modules = None
         self.label_smoothing = True
 
         # first conv layer
         self.first_conv = nn.Sequential(
-            nn.Conv2d(3, 32, 3, stride=2),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(3, 16, 3, stride=2),
+            nn.BatchNorm2d(16),
             nn.ReLU6()
         )
 
         # blocks
-        input_channel = 32
         first_cell_width = make_divisible(16 * width_mult, 8)
-
-        self.first_block_conv = MixedEdge(
-            [OPS['3x3_MBConv1'](input_channel, first_cell_width, 1)])
-        if self.first_block_conv.n_choices == 1:
-            first_block_conv = self.first_block_conv.candidate_ops[0]
-        first_block = MobileInvertedResidualBlock(first_block_conv, None)
         input_channel = first_cell_width
+
+        # blocks
+        self.blocks = nn.ModuleList()
+        for output_channel in output_channels:
+            for i in range(n_cell):
+                if i == 0:
+                    stride = 2
+                else:
+                    stride = 1
+                # conv
+                if stride == 1 and input_channel == output_channel:
+                    modified_conv_candidates = conv_candidates + ['Zero']
+                    self.shortcut = True
+                else:
+                    modified_conv_candidates = conv_candidates
+                    self.shortcut = False
+                conv_op = MixedEdge(candidate_ops=build_candidate_ops(
+                    modified_conv_candidates, input_channel, output_channel, stride, 'weight_bn_act',
+                ), )
+
+                inverted_residual_block = MobileInvertedResidualBlock(conv_op, self.shortcut)
+                self.blocks.append(inverted_residual_block)
+                input_channel = output_channel
 
         # feature mix layer
         self.feature_mix_layer = nn.Sequential(
-            nn.Conv2d(3, 400, 3, stride=2),
+            nn.Conv2d(320, 400, 1),
             nn.BatchNorm2d(400),
-            nn.ReLU6()
+            nn.ReLU6(inplace=True)
         )
+        # average pooling
+        self.gap = nn.AdaptiveAvgPool2d(1)
 
         # Linear Classifier
         self.classifier = nn.Linear(400, 10)
 
+    def forward(self, x):
+        x = self.first_conv(x)
+        for block in self.blocks:
+            x = block(x)
+        x = self.feature_mix_layer(x)
+        x = self.gap(x)
+        x = x.view(x.size(0), -1)  # flatten
+        x = self.classifier(x)
+        return x
+
+    @property
+    def redundant_modules(self):
+        if self._redundant_modules is None:
+            module_list = []
+            for m in self.modules():
+                if m.__str__().startswith('MixedEdge'):
+                    module_list.append(m)
+            self._redundant_modules = module_list
+        return self._redundant_modules
+
     def reset_binary_gates(self):
-        for m in self.modules():
+        for m in self.redundant_modules:
             m.binarize()
 
     def unused_modules_off(self):
@@ -78,3 +116,4 @@ class Supernets(nn.Module):
             for i in unused:
                 m.candidate_ops[i] = unused[i]
         self._unused_modules = None
+

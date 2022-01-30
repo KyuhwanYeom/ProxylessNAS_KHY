@@ -27,7 +27,7 @@ n_cell = 18
 model_init = 'he_fout'
 
 super_net = Supernets(  # over-parameterized net 생성 (큰 net)
-    width_stages=[24, 40, 80, 96, 192, 320], n_cell_stages=[4, 4, 4, 4, 4, 1], stride_stages=[2, 2, 2, 1, 2, 1],
+    output_channels=[24, 40, 80, 96, 192, 320],
     conv_candidates=[
         '3x3_MBConv3', '3x3_MBConv6',
         '5x5_MBConv3', '5x5_MBConv6',
@@ -61,7 +61,7 @@ criterion = nn.CrossEntropyLoss()  # loss 정의
 arch_params = []  # init architecture parameter ,weight parameter
 weight_params = []
 for x in super_net.named_parameters():
-    print(x)
+    print(x[0])
     if 'alpha' in x[0]:
         arch_params.append(x[1])
     else:
@@ -74,16 +74,7 @@ optimizer_arch = optim.Adam(arch_params, lr=1e-3)
 
 nBatch = len(trainloader)
 
-device = torch.device(
-    'cuda:0' if torch.cuda.is_available() else 'cpu')  # gpu 사용
-# print(device)
-super_net.to(device)
-
-for m in super_net.modules():
-    print(m)
-
-warm_up(super_net, trainloader, optimizer_weight)
-train(super_net, trainloader)
+train(super_net, trainloader, optimizer_weight, optimizer_arch)
 
 for epoch in range(50):
     running_loss = 0.0

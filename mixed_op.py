@@ -31,10 +31,8 @@ class MixedEdge(nn.Module):
         super(MixedEdge, self).__init__()
 
         self.candidate_ops = nn.ModuleList(candidate_ops)
-        self.AP_path_alpha = Parameter(torch.Tensor(
-            self.n_choices))  # architecture parameters
-        self.AP_path_wb = Parameter(
-            torch.Tensor(self.n_choices))  # binary gates
+        self.AP_path_alpha = Parameter(torch.nan_to_num(torch.FloatTensor(self.n_choices)))  # architecture parameters
+        self.AP_path_wb = Parameter(torch.nan_to_num(torch.FloatTensor(self.n_choices)))  # binary gates
 
         self.active_index = [0]
         self.inactive_index = None
@@ -122,26 +120,24 @@ class MixedEdge(nn.Module):
     """ """
 
     def binarize(self):
-        """ prepare: active_index, inactive_index, AP_path_wb, log_prob (optional), current_prob_over_ops (optional) """
-        self.log_prob = None
+        """ prepare: active_index, inactive_index, AP_path_wb """
         # reset binary gates
         self.AP_path_wb.data.zero_()
         # binarize according to probs
         probs = F.softmax(self.AP_path_alpha, dim=0)
-        if MixedEdge.MODE == 'two':
-            # sample two ops according to `probs`
-            sample_op = torch.multinomial(probs.data, 2, replacement=False)
-            probs_slice = F.softmax(torch.stack([
-                self.AP_path_alpha[idx] for idx in sample_op
-            ]), dim=0)
-            # chose one to be active and the other to be inactive according to probs_slice
-            c = torch.multinomial(probs_slice.data, 1)[0]  # 0 or 1
-            active_op = sample_op[c].item()
-            inactive_op = sample_op[1 - c].item()
-            self.active_index = [active_op]
-            self.inactive_index = [inactive_op]
-            # set binary gate
-            self.AP_path_wb.data[active_op] = 1.0
+        # sample two ops according to `probs`
+        sample_op = torch.multinomial(probs.data, 2, replacement=False)
+        probs_slice = F.softmax(torch.stack([
+            self.AP_path_alpha[idx] for idx in sample_op
+        ]), dim=0)
+        # chose one to be active and the other to be inactive according to probs_slice
+        c = torch.multinomial(probs_slice.data, 1)[0]  # 0 or 1
+        active_op = sample_op[c].item()
+        inactive_op = sample_op[1 - c].item()
+        self.active_index = [active_op]
+        self.inactive_index = [inactive_op]
+        # set binary gate
+        self.AP_path_wb.data[active_op] = 1.0
 
     def set_arch_param_grad(self):
         # ∂L/∂g (모든 path에 대한 gardient 구함)
