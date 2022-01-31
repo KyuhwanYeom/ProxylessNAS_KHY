@@ -1,4 +1,5 @@
 import torch.nn as nn
+import time
 from utils import *
 from mixed_op import *
 
@@ -30,13 +31,13 @@ class Supernets(nn.Module):
 
         # first conv layer
         self.first_conv = nn.Sequential(
-            nn.Conv2d(3, 16, 3, stride=2),
-            nn.BatchNorm2d(16),
+            nn.Conv2d(3, 8, 3, stride=2),
+            nn.BatchNorm2d(8),
             nn.ReLU6()
         )
 
         # blocks
-        first_cell_width = make_divisible(16 * width_mult, 8)
+        first_cell_width = make_divisible(8 * width_mult, 8)
         input_channel = first_cell_width
 
         # blocks
@@ -64,7 +65,7 @@ class Supernets(nn.Module):
 
         # feature mix layer
         self.feature_mix_layer = nn.Sequential(
-            nn.Conv2d(320, 400, 1),
+            nn.Conv2d(100, 400, 1),
             nn.BatchNorm2d(400),
             nn.ReLU6(inplace=True)
         )
@@ -94,6 +95,27 @@ class Supernets(nn.Module):
             self._redundant_modules = module_list
         return self._redundant_modules
 
+    def init_weight(self, model_init):
+        for m in self.modules():  # m은 각종 layer (Conv, BatchNorm, Linear ...)
+            if isinstance(m, nn.Conv2d):  # conv layer면
+                if model_init == 'he_fout':  # He initialization?
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                    m.weight.data.normal_(0, math.sqrt(2. / n))
+                elif model_init == 'he_fin':
+                    n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
+                    m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):  # batch norm이면 weight = 1, bias = 0
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):  # linear면 weight = uniform, bias = 0
+                stdv = 1. / math.sqrt(m.weight.size(1))
+                m.weight.data.uniform_(-stdv, stdv)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm1d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+                
     def reset_binary_gates(self):
         for m in self.redundant_modules:
             m.binarize()
@@ -117,3 +139,14 @@ class Supernets(nn.Module):
                 m.candidate_ops[i] = unused[i]
         self._unused_modules = None
 
+    def set_arch_param_grad(self):
+        for m in self.redundant_modules:
+            m.set_arch_param_grad()
+
+    def set_chosen_op_active(self):  # validate할 때 쓰임
+        for m in self.redundant_modules:
+            m.set_chosen_op_active() 
+
+    def rescale_updated_arch_param(self):  # mix_op.py 238번째 줄
+        for m in self.redundant_modules:
+            m.rescale_updated_arch_param()

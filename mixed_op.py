@@ -1,14 +1,14 @@
 import numpy as np
 import torch
-from torch.nn.parameter import Parameter
 import torch.nn.functional as F
+import math
 
+from torch.nn.parameter import Parameter
 from layers import *
 
 OPS = {
     'Identity': lambda in_C, out_C, S: Identity(in_C, out_C),
     'Zero': lambda in_C, out_C, S: Zero(stride=S),
-    '3x3_MBConv1': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 1),
     '3x3_MBConv3': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 3),
     '3x3_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 6),
     #######################################################################################
@@ -31,8 +31,8 @@ class MixedEdge(nn.Module):
         super(MixedEdge, self).__init__()
 
         self.candidate_ops = nn.ModuleList(candidate_ops)
-        self.AP_path_alpha = Parameter(torch.nan_to_num(torch.FloatTensor(self.n_choices)))  # architecture parameters
-        self.AP_path_wb = Parameter(torch.nan_to_num(torch.FloatTensor(self.n_choices)))  # binary gates
+        self.AP_path_alpha = Parameter(torch.nan_to_num(torch.Tensor(self.n_choices)))  # architecture parameters
+        self.AP_path_wb = Parameter(torch.nan_to_num(torch.Tensor(self.n_choices)))  # binary gates
 
         self.active_index = [0]
         self.inactive_index = None
@@ -62,12 +62,6 @@ class MixedEdge(nn.Module):
         index = np.random.choice([_i for _i in range(self.n_choices)], 1)[0]
         return self.candidate_ops[index]
 
-    def entropy(self, eps=1e-8):
-        probs = self.probs_over_ops
-        log_probs = torch.log(probs + eps)
-        entropy = - torch.sum(torch.mul(probs, log_probs))
-        return entropy
-
     def is_zero_layer(self):
         return self.active_op.is_zero_layer()
 
@@ -96,27 +90,6 @@ class MixedEdge(nn.Module):
             output = output + self.AP_path_wb[_i] * oi.detach()
         return output
 
-    @property
-    def module_str(self):
-        chosen_index, probs = self.chosen_index
-        return 'Mix(%s, %.3f)' % (self.candidate_ops[chosen_index].module_str, probs)
-
-    @property
-    def config(self):
-        raise ValueError('not needed')
-
-    @staticmethod
-    def build_from_config(config):
-        raise ValueError('not needed')
-
-    def get_flops(self, x):
-        """ Only active paths taken into consideration when calculating FLOPs """
-        flops = 0
-        for i in self.active_index:
-            delta_flop, _ = self.candidate_ops[i].get_flops(x)
-            flops += delta_flop
-        return flops, self.forward(x)
-
     """ """
 
     def binarize(self):
@@ -139,47 +112,40 @@ class MixedEdge(nn.Module):
         # set binary gate
         self.AP_path_wb.data[active_op] = 1.0
 
+    def delta_ij(self, i, j):
+        if i == j:
+            return 1
+        else:
+            return 0
+
     def set_arch_param_grad(self):
         # ∂L/∂g (모든 path에 대한 gardient 구함)
         binary_grads = self.AP_path_wb.grad.data
-        if self.active_op.is_zero_layer():
-            self.AP_path_alpha.grad = None
-            return
         if self.AP_path_alpha.grad is None:
             self.AP_path_alpha.grad = torch.zeros_like(self.AP_path_alpha.data)
-        if MixedEdge.MODE == 'two':
-            involved_idx = self.active_index + self.inactive_index
-            probs_slice = F.softmax(torch.stack([
-                self.AP_path_alpha[idx] for idx in involved_idx
-            ]), dim=0).data
-            for i in range(2):
-                for j in range(2):
-                    origin_i = involved_idx[i]
-                    origin_j = involved_idx[j]
-                    self.AP_path_alpha.grad.data[origin_i] += \
-                        binary_grads[origin_j] * probs_slice[j] * \
-                        (delta_ij(i, j) - probs_slice[i])
-            for _i, idx in enumerate(self.active_index):
-                # ex) self.active_index[0] = (3, 0.14301)
-                self.active_index[_i] = (
-                    idx, self.AP_path_alpha.data[idx].item())
-            for _i, idx in enumerate(self.inactive_index):
-                # ex) self.inactive_index[0] = (1, 0.2313)
-                self.inactive_index[_i] = (
-                    idx, self.AP_path_alpha.data[idx].item())
-        else:
-            probs = self.probs_over_ops.data
-            for i in range(self.n_choices):
-                for j in range(self.n_choices):
-                    self.AP_path_alpha.grad.data[i] += binary_grads[j] * \
-                        probs[j] * (delta_ij(i, j) - probs[i])
+        involved_idx = self.active_index + self.inactive_index
+        probs_slice = F.softmax(torch.stack([
+            self.AP_path_alpha[idx] for idx in involved_idx
+        ]), dim=0).data
+        for i in range(2):
+            for j in range(2):
+                origin_i = involved_idx[i]
+                origin_j = involved_idx[j]
+                self.AP_path_alpha.grad.data[origin_i] += \
+                    binary_grads[origin_j] * probs_slice[j] * \
+                    (self.delta_ij(i, j) - probs_slice[i])
+        for _i, idx in enumerate(self.active_index):
+            # ex) self.active_index[0] = (3, 0.14301)
+            self.active_index[_i] = (
+                idx, self.AP_path_alpha.data[idx].item())
+        for _i, idx in enumerate(self.inactive_index):
+            # ex) self.inactive_index[0] = (1, 0.2313)
+            self.inactive_index[_i] = (
+                idx, self.AP_path_alpha.data[idx].item())
         return
 
     def rescale_updated_arch_param(self):
         # ex) self.active_index[0] = (3, 0.14301)
-        if not isinstance(self.active_index[0], tuple):
-            assert self.active_op.is_zero_layer()
-            return
         involved_idx = [idx for idx, _ in (
             self.active_index + self.inactive_index)]  # ex) [3, 1]
         # ex) [0.14301, 0.2313]
