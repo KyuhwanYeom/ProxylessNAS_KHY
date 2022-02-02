@@ -28,26 +28,24 @@ class Supernets(nn.Module):
         self._redundant_modules = None
         self._unused_modules = None
         self.label_smoothing = True
-
+        self.arch_params = []
+        self.weight_params = []
+        self.model_init = 'he fout'
         # first conv layer
         self.first_conv = nn.Sequential(
             nn.Conv2d(3, 8, 3, stride=2),
             nn.BatchNorm2d(8),
             nn.ReLU6()
         )
-
-        # blocks
-        first_cell_width = make_divisible(8 * width_mult, 8)
-        input_channel = first_cell_width
+        
+        input_channel = 8
 
         # blocks
         self.blocks = nn.ModuleList()
         for output_channel in output_channels:
             for i in range(n_cell):
-                if i == 0:
-                    stride = 2
-                else:
-                    stride = 1
+                stride = 2 if i == 0 else 1
+                
                 # conv
                 if stride == 1 and input_channel == output_channel:
                     modified_conv_candidates = conv_candidates + ['Zero']
@@ -55,9 +53,7 @@ class Supernets(nn.Module):
                 else:
                     modified_conv_candidates = conv_candidates
                     self.shortcut = False
-                conv_op = MixedEdge(candidate_ops=build_candidate_ops(
-                    modified_conv_candidates, input_channel, output_channel, stride, 'weight_bn_act',
-                ), )
+                conv_op = MixedEdge(build_candidate_ops(modified_conv_candidates, input_channel, output_channel, stride))
 
                 inverted_residual_block = MobileInvertedResidualBlock(conv_op, self.shortcut)
                 self.blocks.append(inverted_residual_block)
@@ -74,6 +70,8 @@ class Supernets(nn.Module):
 
         # Linear Classifier
         self.classifier = nn.Linear(400, 10)
+        
+        self.init_parameters()
 
     def forward(self, x):
         x = self.first_conv(x)
@@ -97,14 +95,14 @@ class Supernets(nn.Module):
 
     def init_weight(self, model_init):
         for m in self.modules():  # m은 각종 layer (Conv, BatchNorm, Linear ...)
-            if isinstance(m, nn.Conv2d):  # conv layer면
-                if model_init == 'he_fout':  # He initialization?
+            if isinstance(m, nn.Conv2d):  # conv layer면 He initialization
+                if model_init == 'he_fout':  
                     n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                     m.weight.data.normal_(0, math.sqrt(2. / n))
                 elif model_init == 'he_fin':
                     n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
                     m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d):  # batch norm이면 weight = 1, bias = 0
+            elif isinstance(m, nn.BatchNorm2d or nn.BatchNorm1d):  # batch norm이면 weight = 1, bias = 0
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):  # linear면 weight = uniform, bias = 0
@@ -112,9 +110,15 @@ class Supernets(nn.Module):
                 m.weight.data.uniform_(-stdv, stdv)
                 if m.bias is not None:
                     m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm1d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
+    
+    def init_parameters(self):
+        self.init_weight(self.model_init)
+        for params in self.named_parameters():
+            if 'AP_path_alpha' in params[0]:
+                params[1].data.normal_(0, 1e+1)
+                self.arch_params.append(params[1])
+            else:
+                self.weight_params.append(params[1])
                 
     def reset_binary_gates(self):
         for m in self.redundant_modules:

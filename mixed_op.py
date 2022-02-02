@@ -20,7 +20,7 @@ OPS = {
 }
 
 
-def build_candidate_ops(candidate_ops, in_channels, out_channels, stride, ops_order):
+def build_candidate_ops(candidate_ops, in_channels, out_channels, stride):
     return [
         OPS[name](in_channels, out_channels, stride) for name in candidate_ops
     ]
@@ -56,14 +56,6 @@ class MixedEdge(nn.Module):
     def chosen_op(self):
         index, _ = self.chosen_index
         return self.candidate_ops[index]
-
-    @property
-    def random_op(self):
-        index = np.random.choice([_i for _i in range(self.n_choices)], 1)[0]
-        return self.candidate_ops[index]
-
-    def is_zero_layer(self):
-        return self.active_op.is_zero_layer()
 
     @property
     def active_op(self):
