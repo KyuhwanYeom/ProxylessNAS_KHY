@@ -31,8 +31,10 @@ class MixedEdge(nn.Module):
         super(MixedEdge, self).__init__()
 
         self.candidate_ops = nn.ModuleList(candidate_ops)
-        self.AP_path_alpha = Parameter(torch.nan_to_num(torch.Tensor(self.n_choices)))  # architecture parameters
-        self.AP_path_wb = Parameter(torch.nan_to_num(torch.Tensor(self.n_choices)))  # binary gates
+        self.AP_path_alpha = Parameter(torch.nan_to_num(
+            torch.Tensor(self.n_choices)))  # architecture parameters
+        self.AP_path_wb = Parameter(torch.nan_to_num(
+            torch.Tensor(self.n_choices)))  # binary gates
 
         self.active_index = [0]
         self.inactive_index = None

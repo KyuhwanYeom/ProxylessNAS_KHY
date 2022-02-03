@@ -23,7 +23,7 @@ class MobileInvertedResidualBlock(nn.Module):
 class Supernets(nn.Module):
 
     def __init__(self, output_channels, conv_candidates,
-                 n_classes=10, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0, n_cell = 3):
+                 n_classes=10, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0, n_cell=3):
         super(Supernets, self).__init__()
         self._redundant_modules = None
         self._unused_modules = None
@@ -37,7 +37,7 @@ class Supernets(nn.Module):
             nn.BatchNorm2d(8),
             nn.ReLU6()
         )
-        
+
         input_channel = 8
 
         # blocks
@@ -45,7 +45,7 @@ class Supernets(nn.Module):
         for output_channel in output_channels:
             for i in range(n_cell):
                 stride = 2 if i == 0 else 1
-                
+
                 # conv
                 if stride == 1 and input_channel == output_channel:
                     modified_conv_candidates = conv_candidates + ['Zero']
@@ -53,15 +53,17 @@ class Supernets(nn.Module):
                 else:
                     modified_conv_candidates = conv_candidates
                     self.shortcut = False
-                conv_op = MixedEdge(build_candidate_ops(modified_conv_candidates, input_channel, output_channel, stride))
+                conv_op = MixedEdge(build_candidate_ops(
+                    modified_conv_candidates, input_channel, output_channel, stride))
 
-                inverted_residual_block = MobileInvertedResidualBlock(conv_op, self.shortcut)
+                inverted_residual_block = MobileInvertedResidualBlock(
+                    conv_op, self.shortcut)
                 self.blocks.append(inverted_residual_block)
                 input_channel = output_channel
 
         # feature mix layer
         self.feature_mix_layer = nn.Sequential(
-            nn.Conv2d(100, 400, 1),
+            nn.Conv2d(128, 400, 1),
             nn.BatchNorm2d(400),
             nn.ReLU6(inplace=True)
         )
@@ -70,7 +72,7 @@ class Supernets(nn.Module):
 
         # Linear Classifier
         self.classifier = nn.Linear(400, 10)
-        
+
         self.init_parameters()
 
     def forward(self, x):
@@ -96,13 +98,14 @@ class Supernets(nn.Module):
     def init_weight(self, model_init):
         for m in self.modules():  # m은 각종 layer (Conv, BatchNorm, Linear ...)
             if isinstance(m, nn.Conv2d):  # conv layer면 He initialization
-                if model_init == 'he_fout':  
+                if model_init == 'he_fout':
                     n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                     m.weight.data.normal_(0, math.sqrt(2. / n))
                 elif model_init == 'he_fin':
                     n = m.kernel_size[0] * m.kernel_size[1] * m.in_channels
                     m.weight.data.normal_(0, math.sqrt(2. / n))
-            elif isinstance(m, nn.BatchNorm2d or nn.BatchNorm1d):  # batch norm이면 weight = 1, bias = 0
+            # batch norm이면 weight = 1, bias = 0
+            elif isinstance(m, nn.BatchNorm2d or nn.BatchNorm1d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):  # linear면 weight = uniform, bias = 0
@@ -110,7 +113,7 @@ class Supernets(nn.Module):
                 m.weight.data.uniform_(-stdv, stdv)
                 if m.bias is not None:
                     m.bias.data.zero_()
-    
+
     def init_parameters(self):
         self.init_weight(self.model_init)
         for params in self.named_parameters():
@@ -119,7 +122,7 @@ class Supernets(nn.Module):
                 self.arch_params.append(params[1])
             else:
                 self.weight_params.append(params[1])
-                
+
     def reset_binary_gates(self):
         for m in self.redundant_modules:
             m.binarize()
@@ -149,8 +152,8 @@ class Supernets(nn.Module):
 
     def set_chosen_op_active(self):  # validate할 때 쓰임
         for m in self.redundant_modules:
-            m.set_chosen_op_active() 
+            m.set_chosen_op_active()
 
-    def rescale_updated_arch_param(self):  # mix_op.py 238번째 줄
+    def rescale_updated_arch_param(self):
         for m in self.redundant_modules:
             m.rescale_updated_arch_param()
