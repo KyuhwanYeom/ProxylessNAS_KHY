@@ -25,12 +25,13 @@ class Supernets(nn.Module):
     def __init__(self, output_channels, conv_candidates,
                  n_classes=10, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0, n_cell=3):
         super(Supernets, self).__init__()
-        self._redundant_modules = None
-        self._unused_modules = None
+        self.redundant_modules = []
+        self.unused_modules = []
         self.label_smoothing = True
         self.arch_params = []
         self.weight_params = []
         self.model_init = 'he fout'
+        self.MODE = "NORMAL"
         # first conv layer
         self.first_conv = nn.Sequential(
             nn.Conv2d(3, 8, 3, stride=2),
@@ -73,6 +74,7 @@ class Supernets(nn.Module):
         # Linear Classifier
         self.classifier = nn.Linear(400, 10)
 
+        self.init_modules()
         self.init_parameters()
 
     def forward(self, x):
@@ -84,16 +86,6 @@ class Supernets(nn.Module):
         x = x.view(x.size(0), -1)  # flatten
         x = self.classifier(x)
         return x
-
-    @property
-    def redundant_modules(self):
-        if self._redundant_modules is None:
-            module_list = []
-            for m in self.modules():
-                if m.__str__().startswith('MixedEdge'):
-                    module_list.append(m)
-            self._redundant_modules = module_list
-        return self._redundant_modules
 
     def init_weight(self, model_init):
         for m in self.modules():  # m은 각종 layer (Conv, BatchNorm, Linear ...)
@@ -114,6 +106,11 @@ class Supernets(nn.Module):
                 if m.bias is not None:
                     m.bias.data.zero_()
 
+    def init_modules(self):
+        for m in self.modules():
+            if m.__str__().startswith('MixedEdge'):
+                self.redundant_modules.append(m)
+
     def init_parameters(self):
         self.init_weight(self.model_init)
         for params in self.named_parameters():
@@ -128,23 +125,23 @@ class Supernets(nn.Module):
             m.binarize()
 
     def unused_modules_off(self):
-        self._unused_modules = []
         for m in self.redundant_modules:
             unused = {}
-            involved_index = m.active_index + m.inactive_index
+            if self.MODE == "NORMAL":
+                involved_index = m.active_index + m.inactive_index
+            else:
+                involved_index = m.active_index
             for i in range(m.n_choices):  # n_choices : candiate path의 개수
                 if i not in involved_index:
                     unused[i] = m.candidate_ops[i]
                     m.candidate_ops[i] = None
-            self._unused_modules.append(unused)
+            self.unused_modules.append(unused)
 
     def unused_modules_back(self):
-        if self._unused_modules is None:
-            return
-        for m, unused in zip(self.redundant_modules, self._unused_modules):
+        for m, unused in zip(self.redundant_modules, self.unused_modules):
             for i in unused:
                 m.candidate_ops[i] = unused[i]
-        self._unused_modules = None
+        self.unused_modules = []
 
     def set_arch_param_grad(self):
         for m in self.redundant_modules:

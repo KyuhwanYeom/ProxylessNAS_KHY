@@ -30,7 +30,7 @@ class train():
 
     def warm_up(self, warmup=0, warmup_epochs=1):
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optimizer_weight, T_0=warmup_epochs + 1, T_mult=1, eta_min=0.01)  # cosine annealing
+            self.optimizer_weight, T_0=warmup_epochs + 1, T_mult=1, eta_min=1e-3)  # cosine annealing
         for epoch in range(warmup, warmup_epochs):
             print('\n', '-' * 30, 'Warmup epoch: %d' %
                   (epoch + 1), '-' * 30, '\n')
@@ -79,10 +79,15 @@ class train():
 
             scheduler.step()
             warmup = epoch + 1 < warmup_epochs
+
+            (val_loss, val_top1, val_top5) = self.validate()  # validation 진행
             print(f'Loss : {losses.val:.4f}, {losses.avg:.4f}')
             print(f'Top-1 acc : {top1.val:.3f}, {top1.avg:.3f}')
             print(f'Top-5 acc : {top5.val:.3f}, {top5.avg:.3f}')
             print(f'learning rate : {scheduler.get_lr()[0]}')
+            print(f'Validation Loss : {val_loss}')
+            print(f'Valid Top-1 acc : {val_top1}')
+            print(f'Valid Top-5 acc : {val_top5}')
             state_dict = self.net.state_dict()
             # rm architecture parameters & binary gates
             for key in list(state_dict.keys()):
@@ -90,11 +95,11 @@ class train():
                     state_dict.pop(key)
         return scheduler.get_lr()[0]
 
-    def train(self, init_lr, warmup=0, train_epochs=2):
+    def train(self, init_lr, warmup=0, train_epochs=30):
         self.optimizer_weight = optim.SGD(
             self.net.weight_params, lr=init_lr, momentum=0.9)  # optimizer 재설정
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optimizer_weight, T_0=train_epochs+1, T_mult=1, eta_min=0.00001)  # cosine annealing
+            self.optimizer_weight, T_0=train_epochs+1, T_mult=1, eta_min=1e-5)  # cosine annealing
         writer2 = SummaryWriter()
         for epoch in range(0, train_epochs):
             print('\n', '-' * 30, 'Train epoch: %d' %
@@ -109,6 +114,7 @@ class train():
                 inputs, labels = data[0].to(
                     self.device), data[1].to(self.device)
                 # compute output
+                self.net.MODE = "NORMAL"
                 self.net.reset_binary_gates()  # random sample binary gates
                 self.net.unused_modules_off()  # remove unused module for speedup
                 output = self.net(inputs)  # forward (DataParallel)
@@ -163,7 +169,6 @@ class train():
                 'weight_optimizer': self.optimizer_weight.state_dict(),
                 'arch_optimizer': self.optimizer_alpha.state_dict(),
                 'state_dict': self.net.state_dict(),
-                'net': self.net
             })
 
     def test(self):
@@ -183,13 +188,17 @@ class train():
             f'Accuracy of the network on the 10000 test images: {100 * correct // total} %')
 
     def validate(self):
-        self.net.eval()
+        self.net.train()
+        # set chosen op active
+        self.net.set_chosen_op_active()  # super_proxyless.py 175번째줄
+        # remove unused modules
+        self.net.unused_modules_off()
+
+        # self.net.eval()
         losses = AverageMeter()
         top1 = AverageMeter()
         top5 = AverageMeter()
 
-        end = time.time()
-        # noinspection PyUnresolvedReferences
         with torch.no_grad():
             for i, (images, labels) in enumerate(self.validloader):
                 images, labels = images.to(self.device), labels.to(self.device)
@@ -202,6 +211,9 @@ class train():
                 losses.update(loss, images.size(0))
                 top1.update(acc1[0], images.size(0))
                 top5.update(acc5[0], images.size(0))
+
+        # unused modules back
+        self.net.unused_modules_back()
 
         return losses.avg, top1.avg, top5.avg
 
@@ -241,4 +253,5 @@ class train():
         # back to normal mode
         net.unused_modules_back()
         #print("architecture parameter update finished")
+        self.net.MODE = "NONE"
         return loss.data.item()

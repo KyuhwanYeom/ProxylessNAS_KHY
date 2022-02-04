@@ -36,7 +36,7 @@ class MixedEdge(nn.Module):
         self.AP_path_wb = Parameter(torch.nan_to_num(
             torch.Tensor(self.n_choices)))  # binary gates
 
-        self.active_index = [0]
+        self.active_index = None
         self.inactive_index = None
 
     @property
@@ -87,24 +87,23 @@ class MixedEdge(nn.Module):
     """ """
 
     def binarize(self):
-        """ prepare: active_index, inactive_index, AP_path_wb """
         # reset binary gates
         self.AP_path_wb.data.zero_()
         # binarize according to probs
         probs = F.softmax(self.AP_path_alpha, dim=0)
         # sample two ops according to `probs`
-        sample_op = torch.multinomial(probs.data, 2, replacement=False)
-        probs_slice = F.softmax(torch.stack([
-            self.AP_path_alpha[idx] for idx in sample_op
-        ]), dim=0)
-        # chose one to be active and the other to be inactive according to probs_slice
-        c = torch.multinomial(probs_slice.data, 1)[0]  # 0 or 1
-        active_op = sample_op[c].item()
-        inactive_op = sample_op[1 - c].item()
-        self.active_index = [active_op]
-        self.inactive_index = [inactive_op]
+        sample_op = torch.multinomial(probs, 2, replacement=False)
+        index_active = sample_op[0].item()
+        index_inactive = sample_op[1].item()
+        # big one is active, small one is inactive
+        if(probs[index_active] <= probs[index_inactive]):
+            tmp = index_active
+            index_active = index_inactive
+            index_inactive = tmp
+        self.active_index = [index_active]
+        self.inactive_index = [index_inactive]
         # set binary gate
-        self.AP_path_wb.data[active_op] = 1.0
+        self.AP_path_wb.data[index_active] = 1.0
 
     def delta_ij(self, i, j):
         if i == j:
@@ -115,10 +114,13 @@ class MixedEdge(nn.Module):
     def set_arch_param_grad(self):
         # ∂L/∂g (모든 path에 대한 gardient 구함)
         binary_grads = self.AP_path_wb.grad.data
+        if isinstance(self.candidate_ops[self.active_index[0]], Zero):
+            self.AP_path_alpha.grad = None
+            return
         if self.AP_path_alpha.grad is None:
             self.AP_path_alpha.grad = torch.zeros_like(self.AP_path_alpha.data)
         involved_idx = self.active_index + self.inactive_index
-        probs_slice = F.softmax(torch.stack([
+        probs = F.softmax(torch.stack([
             self.AP_path_alpha[idx] for idx in involved_idx
         ]), dim=0).data
         for i in range(2):
@@ -126,17 +128,16 @@ class MixedEdge(nn.Module):
                 origin_i = involved_idx[i]
                 origin_j = involved_idx[j]
                 self.AP_path_alpha.grad.data[origin_i] += \
-                    binary_grads[origin_j] * probs_slice[j] * \
-                    (self.delta_ij(i, j) - probs_slice[i])
-        for _i, idx in enumerate(self.active_index):
+                    binary_grads[origin_j] * probs[j] * \
+                    (self.delta_ij(i, j) - probs[i])
+        for i, idx in enumerate(self.active_index):
             # ex) self.active_index[0] = (3, 0.14301)
-            self.active_index[_i] = (
+            self.active_index[i] = (
                 idx, self.AP_path_alpha.data[idx].item())
-        for _i, idx in enumerate(self.inactive_index):
+        for i, idx in enumerate(self.inactive_index):
             # ex) self.inactive_index[0] = (1, 0.2313)
-            self.inactive_index[_i] = (
+            self.inactive_index[i] = (
                 idx, self.AP_path_alpha.data[idx].item())
-        return
 
     def rescale_updated_arch_param(self):
         # ex) self.active_index[0] = (3, 0.14301)

@@ -48,20 +48,40 @@ super_net = Supernets(  # over-parameterized net 생성 (큰 net)
 start = time.time()
 
 # weight optimizer 정의 (momentum-SGD)
-optimizer_weight = optim.SGD(super_net.weight_params, lr=0.05, momentum=0.9)
+optimizer_weight = optim.SGD(super_net.weight_params, lr=0.01, momentum=0.9)
 # architecture parameter optimizer 정의 (Adam)
 optimizer_arch = optim.Adam(super_net.arch_params, lr=0.006)
 
-train(super_net, trainloader, validloader,
-      testloader, optimizer_weight, optimizer_arch)
+Trained = train(super_net, trainloader, validloader,
+                testloader, optimizer_weight, optimizer_arch)
 
 end = time.time()
 
-checkpoint = torch.load("./output/checkpoint.pth")
-optimizer_weight = checkpoint["weight_optimizer"]
-optimizer_arch = checkpoint["arch_optimizer"]
+Model_train(Trained.net, trainloader, validloader,
+            testloader, Trained.optimizer_weight)
+################################################
+# train model
 
-Model_train(checkpoint["net"], trainloader, validloader,
+checkpoint = torch.load("./output/checkpoint.pth")
+model = Supernets(
+    output_channels=[32, 64, 128],
+    #output_channels=[8, 20, 40, 64, 80, 100],
+    conv_candidates=[
+        '3x3_MBConv3', '3x3_MBConv6',
+        '5x5_MBConv3', '5x5_MBConv6',
+        '7x7_MBConv3', '7x7_MBConv6',
+    ]
+)
+optimizer_weight = optim.SGD(super_net.weight_params, lr=0.05, momentum=0.9)
+optimizer_arch = optim.Adam(super_net.arch_params, lr=0.006)
+
+model.load_state_dict(checkpoint['state_dict'])
+optimizer_weight.load_state_dict(checkpoint['weight_optimizer'])
+optimizer_arch.load_state_dict(checkpoint['arch_optimizer'])
+
+"""
+Model_train(model, trainloader, validloader,
             testloader, optimizer_weight, optimizer_arch)
+"""
 
 print(f"{end - start:.5f} sec")
