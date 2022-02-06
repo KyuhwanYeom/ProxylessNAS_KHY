@@ -3,9 +3,11 @@ import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.backends.cudnn as cudnn
 import os
 from torch.utils.tensorboard import SummaryWriter
 from utils import *
+from mixed_op import *
 
 
 class Model_train():
@@ -15,21 +17,21 @@ class Model_train():
         self.validloader = validloader
         self.testloader = testloader
         self.optimizer_weight = optimizer_weight
+        MixedEdge.MODE = 'None'
         self.writer = SummaryWriter()
 
-        self.device = torch.device(
-            'cuda:0' if torch.cuda.is_available() else 'cpu')  # gpu 사용
-        self.net = nn.DataParallel(self.net)
-        # print(device)
-        self.net.to(self.device)
-        self.net = self.net.module  # dataparallel
+        self.multiGPU()
+        
         self.train()
         self.validate()
         self.test()
 
+    def multiGPU(self):
+        self.device = torch.device(
+            'cuda' if torch.cuda.is_available() else 'cpu')  # gpu 사용
+        self.net.to(self.device)
+        
     def train_one_epoch(self, adjust_lr_func):
-        batch_time = AverageMeter()
-        data_time = AverageMeter()
         losses = AverageMeter()
         top1 = AverageMeter()
         top5 = AverageMeter()
@@ -44,7 +46,7 @@ class Model_train():
 
             # compute output
             output = self.net(images)
-            if self.net.label_smoothing > 0:
+            if self.net.module.label_smoothing > 0:
                 loss = cross_entropy_with_label_smoothing(
                     output, labels, 0.1)
             else:
@@ -60,14 +62,12 @@ class Model_train():
             self.net.zero_grad()  # or self.optimizer.zero_grad()
             loss.backward()
             self.optimizer_weight.step()
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
+            progress_bar(i, len(self.trainloader), 'Train Loss: %.3f | Top-1 Acc: %.3f%% | Top-5 Acc: %.3f%%'
+                             % (losses.avg, top1.avg, top5.avg))
 
         return top1, top5
 
-    def train(self, train_epochs=200):
+    def train(self, train_epochs=300):
         nBatch = len(self.trainloader)
         for epoch in range(0, train_epochs):
             print('\n', '-' * 30, 'Train epoch: %d' %
@@ -78,17 +78,12 @@ class Model_train():
             )
             (val_loss, val_top1, val_top5) = self.validate()  # validation 진행
 
-            print(f'train Top-1 acc : {train_top1.val:.4f}')
-            print(f'train Top-5 acc : {train_top5.val:.4f}')
-            print(f'Validation Loss : {val_loss}')
-            print(f'Valid Top-1 acc : {val_top1}')
-            print(f'Valid Top-5 acc : {val_top5}')
 
     # cosine annealing 사용
-    def _calc_learning_rate(self, epoch, batch, nBatch, n_epochs=200):
+    def _calc_learning_rate(self, epoch, batch, nBatch, n_epochs=300):
         T_total = n_epochs * nBatch
         T_cur = epoch * nBatch + batch
-        lr = 0.5 * 0.05 * (1 + math.cos(math.pi * T_cur / T_total))
+        lr = 0.5 * 0.01 * (1 + math.cos(math.pi * T_cur / T_total))
         return lr
 
     def adjust_learning_rate(self, optimizer, epoch, batch, nBatch):
@@ -137,9 +132,7 @@ class Model_train():
                 losses.update(loss, images.size(0))
                 top1.update(acc1[0], images.size(0))
                 top5.update(acc5[0], images.size(0))
-                if i + 1 == len(self.validloader):
-                    print(f'Loss : {losses.val:.4f}, {losses.avg:.4f}')
-                    print(f'Top-1 acc : {top1.val:.3f}, {top1.avg:.3f}')
-                    print(f'Top-5 acc : {top5.val:.3f}, {top5.avg:.3f}')
+                progress_bar(i, len(self.validloader), 'Valid Loss: %.3f | Top-1 Acc: %.3f%% | Top-5 Acc: %.3f%%'
+                             % (losses.avg, top1.avg, top5.avg))
 
         return losses.avg, top1.avg, top5.avg

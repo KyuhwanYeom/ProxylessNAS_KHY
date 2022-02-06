@@ -2,36 +2,46 @@ import time
 import math
 import torch
 import torch.nn as nn
+import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import os
 from torch.utils.tensorboard import SummaryWriter
 from utils import *
-
+from mixed_op import *
 
 class train():
-    def __init__(self, net, trainloader, validloader, testloader, optimizer_weight, optimizer_alpha):
+    def __init__(self, net, trainloader, validloader, testloader, optimizer_weight, optimizer_alpha, is_warmup, best_acc, start_epoch):
         self.net = net
         self.trainloader = trainloader
         self.validloader = validloader
         self.testloader = testloader
         self.optimizer_weight = optimizer_weight
         self.optimizer_alpha = optimizer_alpha
+        self.is_warmup = is_warmup
+        self.best_acc = best_acc
+        self.start_epoch = start_epoch
+        self.lr = optimizer_weight.param_groups[0]['lr']
+        self.train_MODE = 'False'
         self.writer = SummaryWriter()
-
-        self.device = torch.device(
-            'cuda:0' if torch.cuda.is_available() else 'cpu')  # gpu 사용
-        self.net = nn.DataParallel(self.net)
-        # print(device)
-        self.net.to(self.device)
-        self.net = self.net.module  # dataparallel
-        self.lr = self.warm_up()
+        
+        self.multiGPU()
+        
+        if is_warmup == True:
+            self.lr = self.warm_up()
         self.train(self.lr)
         self.test()
-
-    def warm_up(self, warmup=0, warmup_epochs=1):
+        
+    def multiGPU(self):
+        self.device = torch.device(
+            'cuda' if torch.cuda.is_available() else 'cpu')  # gpu 사용
+        self.net.to(self.device)
+        self.net = nn.DataParallel(self.net)  # dataparallel
+        cudnn.benchmark = True
+        
+    def warm_up(self, warmup_epochs=50):
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optimizer_weight, T_0=warmup_epochs + 1, T_mult=1, eta_min=1e-3)  # cosine annealing
-        for epoch in range(warmup, warmup_epochs):
+            self.optimizer_weight, T_0=warmup_epochs + 1, T_mult=1, eta_min=1e-4)  # cosine annealing
+        for epoch in range(self.start_epoch, warmup_epochs):
             print('\n', '-' * 30, 'Warmup epoch: %d' %
                   (epoch + 1), '-' * 30, '\n')
             losses = AverageMeter()
@@ -41,15 +51,14 @@ class train():
             self.net.train()
 
             for i, data in enumerate(self.trainloader, 0):
-                inputs, labels = data[0].to(
-                    self.device), data[1].to(self.device)
+                inputs, labels = data[0].to(self.device), data[1].to(self.device)
                 # compute output
-                self.net.reset_binary_gates()  # random sample binary gates
+                self.net.module.reset_binary_gates()  # random sample binary gates
                 # remove unused module for speedup
-                self.net.unused_modules_off()
+                self.net.module.unused_modules_off()
                 output = self.net(inputs)  # forward (DataParallel)
                 # loss
-                if self.net.label_smoothing:
+                if self.net.module.label_smoothing:
                     loss = cross_entropy_with_label_smoothing(
                         output, labels, 0.1)
                 else:
@@ -75,33 +84,43 @@ class train():
 
                 self.optimizer_weight.step()  # update weight parameters
                 # unused modules back(복귀)
-                self.net.unused_modules_back()  # super_proxyless.py 167번째줄
+                self.net.module.unused_modules_back()  # super_proxyless.py 167번째줄
+                progress_bar(i, len(self.trainloader), 'Train Loss: %.3f | Top-1 Acc: %.3f%% | Top-5 Acc: %.3f%%'
+                             % (losses.avg, top1.avg, top5.avg))
 
             scheduler.step()
             warmup = epoch + 1 < warmup_epochs
-
+            
+            self.write_file(epoch+1, losses, top1, top5, scheduler.get_last_lr()[0]) # 기록 저장
             (val_loss, val_top1, val_top5) = self.validate()  # validation 진행
-            print(f'Loss : {losses.val:.4f}, {losses.avg:.4f}')
-            print(f'Top-1 acc : {top1.val:.3f}, {top1.avg:.3f}')
-            print(f'Top-5 acc : {top5.val:.3f}, {top5.avg:.3f}')
-            print(f'learning rate : {scheduler.get_lr()[0]}')
-            print(f'Validation Loss : {val_loss}')
-            print(f'Valid Top-1 acc : {val_top1}')
-            print(f'Valid Top-5 acc : {val_top5}')
+            
+            print(f'learning rate : {scheduler.get_last_lr()[0]}')
+            
             state_dict = self.net.state_dict()
             # rm architecture parameters & binary gates
             for key in list(state_dict.keys()):
                 if 'AP_path_alpha' in key or 'AP_path_wb' in key:
                     state_dict.pop(key)
+            
+            if val_top1 > self.best_acc:
+                self.save_model({
+                    'warmup': True,
+                    'epoch': epoch,
+                    'acc': val_top1,
+                    'weight_optimizer': self.optimizer_weight.state_dict(),
+                    'arch_optimizer': self.optimizer_alpha.state_dict(),
+                    'net': self.net.state_dict(),
+                })
+                self.best_acc = val_top1
+                
         return scheduler.get_lr()[0]
 
-    def train(self, init_lr, warmup=0, train_epochs=30):
+    def train(self, init_lr, train_epochs=50):
         self.optimizer_weight = optim.SGD(
-            self.net.weight_params, lr=init_lr, momentum=0.9)  # optimizer 재설정
+            self.net.module.weight_params, lr=init_lr, momentum=0.9)  # optimizer 재설정
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer_weight, T_0=train_epochs+1, T_mult=1, eta_min=1e-5)  # cosine annealing
-        writer2 = SummaryWriter()
-        for epoch in range(0, train_epochs):
+        for epoch in range(self.start_epoch, train_epochs):
             print('\n', '-' * 30, 'Train epoch: %d' %
                   (epoch + 1), '-' * 30, '\n')
             losses = AverageMeter()
@@ -114,12 +133,12 @@ class train():
                 inputs, labels = data[0].to(
                     self.device), data[1].to(self.device)
                 # compute output
-                self.net.MODE = "NORMAL"
-                self.net.reset_binary_gates()  # random sample binary gates
-                self.net.unused_modules_off()  # remove unused module for speedup
+                self.net.MODE = 'NORMAL'
+                self.net.module.reset_binary_gates()  # random sample binary gates
+                self.net.module.unused_modules_off()  # remove unused module for speedup
                 output = self.net(inputs)  # forward (DataParallel)
                 # loss
-                if self.net.label_smoothing:
+                if self.net.module.label_smoothing:
                     loss = cross_entropy_with_label_smoothing(
                         output, labels, 0.1)
                 else:
@@ -136,12 +155,11 @@ class train():
                 loss.backward()
                 self.optimizer_weight.step()  # update weight parameters
                 # unused modules back
-                self.net.unused_modules_back()
+                self.net.module.unused_modules_back()
                 # skip architecture parameter updates in the first epoch
                 if epoch > 0 and i % 6 == 0:
                     # update architecture parameters
-                    arch_loss = self.gradient_step(
-                        self.net, self.optimizer_alpha)  # gradient update
+                    arch_loss = self.gradient_step()  # gradient update
                 # write in tensorboard
                 if i % 5 == 0:
                     # print(loss.item())
@@ -151,25 +169,25 @@ class train():
                                            epoch*len(self.trainloader) + i)
                     self.writer.add_scalar('train_top-5 acc', top5.val,
                                            epoch*len(self.trainloader) + i)
-
+                progress_bar(i, len(self.trainloader), 'Train Loss: %.3f | Top-1 Acc: %.3f%% | Top-5 Acc: %.3f%%'
+                             % (losses.avg, top1.avg, top5.avg))
+            self.train_MODE = 'True'
             scheduler.step()
-            print(f'Loss : {losses.val:.4f}, {losses.avg:.4f}')
-            print(f'Top-1 acc : {top1.val:.3f}, {top1.avg:.3f}')
-            print(f'Top-5 acc : {top5.val:.3f}, {top5.avg:.3f}')
-            print(f'learning rate : {scheduler.get_lr()[0]}')
+            self.write_file(epoch + 1, losses, top1, top5, scheduler.get_last_lr()[0])
+            print(f'learning rate : {scheduler.get_last_lr()[0]}')
 
             (val_loss, val_top1, val_top5) = self.validate()  # validation 진행
-            print(f'Validation Loss : {val_loss}')
-            print(f'Valid Top-1 acc : {val_top1}')
-            print(f'Valid Top-5 acc : {val_top5}')
-
-            self.save_model({
-                'warmup': False,
-                'epoch': epoch,
-                'weight_optimizer': self.optimizer_weight.state_dict(),
-                'arch_optimizer': self.optimizer_alpha.state_dict(),
-                'state_dict': self.net.state_dict(),
-            })
+            self.train_MODE = 'False'
+            if val_top1 > self.best_acc :
+                self.save_model({
+                    'warmup': False,
+                    'epoch': epoch,
+                    'acc': val_top1,
+                    'weight_optimizer': self.optimizer_weight.state_dict(),
+                    'arch_optimizer': self.optimizer_alpha.state_dict(),
+                    'net': self.net.state_dict(),
+                })
+                self.best_acc = val_top1
 
     def test(self):
         correct = 0
@@ -188,11 +206,13 @@ class train():
             f'Accuracy of the network on the 10000 test images: {100 * correct // total} %')
 
     def validate(self):
-        self.net.train()
+        if self.train_MODE == 'True':
+            MixedEdge.MODE = 'None'
+        self.net.eval()
         # set chosen op active
-        self.net.set_chosen_op_active()  # super_proxyless.py 175번째줄
+        self.net.module.set_chosen_op_active()  # super_proxyless.py 175번째줄
         # remove unused modules
-        self.net.unused_modules_off()
+        self.net.module.unused_modules_off()
 
         # self.net.eval()
         losses = AverageMeter()
@@ -211,12 +231,29 @@ class train():
                 losses.update(loss, images.size(0))
                 top1.update(acc1[0], images.size(0))
                 top5.update(acc5[0], images.size(0))
-
+                progress_bar(i, len(self.validloader), 'Valid Loss: %.3f | Top-1 Acc: %.3f%% | Top-5 Acc: %.3f%%'
+                             % (losses.avg, top1.avg, top5.avg))
+        
         # unused modules back
-        self.net.unused_modules_back()
-
+        self.net.module.unused_modules_back()
+        self.write_file_valid(losses, top1, top5)
+        
         return losses.avg, top1.avg, top5.avg
 
+    def write_file(self, epoch, losses, top1, top5, lr):
+        logfile = os.path.join("./output", 'out.txt')
+        print_epoch = f"----------------------epoch : {epoch}----------------------\n"
+        tmp = f"loss : {losses.avg:.3f}, top1-accuracy : {top1.avg:.3f}, top5-accuracy : {top5.avg:.3f}, learning rate : {lr}\n"
+        with open(logfile, 'a') as fout:
+            fout.write(print_epoch)
+            fout.write(tmp)
+            
+    def write_file_valid(self, losses, top1, top5):
+        logfile = os.path.join("./output", 'out.txt')
+        tmp = f"loss : {losses.avg:.3f}, top1-accuracy : {top1.avg:.3f}, top5-accuracy : {top5.avg:.3f}\n"
+        with open(logfile, 'a') as fout:
+            fout.write(tmp)
+        
     def save_model(self, checkpoint):
         #checkpoint = {'state_dict': self.net.module.state_dict()}
         model_name = 'checkpoint.pth'
@@ -228,30 +265,27 @@ class train():
             fout.write(model_path + '\n')
         torch.save(checkpoint, model_path)
 
-    def gradient_step(self, net, arch_optimizer):
-        #print("let update architecture parameter!")
+    def gradient_step(self):
         # switch to train mode
-        net.train()
+        self.net.train()
         # sample a batch of data from validation set (architecture parameter은 validation set에서 update)
-        images, labels = next(iter(self.validloader))
+        images, labels = next(iter(self.trainloader))
         images, labels = images.to(self.device), labels.to(self.device)
         # compute output
-        net.reset_binary_gates()  # random sample binary gates
-        net.unused_modules_off()  # remove unused module for speedup
-        output = net(images)
+        self.net.module.reset_binary_gates()  # random sample binary gates
+        self.net.module.unused_modules_off()  # remove unused module for speedup
+        output = self.net(images)
         # loss
         criterion = nn.CrossEntropyLoss()
         loss = criterion(output, labels)
         # compute gradient and do SGD step
         # zero grads of weight_param, arch_param & binary_param
-        net.zero_grad()
+        self.net.zero_grad()
         loss.backward()
         # set architecture parameter gradients
-        net.set_arch_param_grad()  # super_proxyless.py 137번째줄
-        arch_optimizer.step()
-        net.rescale_updated_arch_param()  # super_proxyless.py 145번째줄
+        self.net.module.set_arch_param_grad()  # super_proxyless.py 137번째줄
+        self.optimizer_alpha.step()
+        self.net.module.rescale_updated_arch_param()  # super_proxyless.py 145번째줄
         # back to normal mode
-        net.unused_modules_back()
-        #print("architecture parameter update finished")
-        self.net.MODE = "NONE"
+        self.net.module.unused_modules_back()
         return loss.data.item()

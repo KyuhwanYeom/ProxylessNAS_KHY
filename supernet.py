@@ -31,7 +31,6 @@ class Supernets(nn.Module):
         self.arch_params = []
         self.weight_params = []
         self.model_init = 'he fout'
-        self.MODE = "NORMAL"
         # first conv layer
         self.first_conv = nn.Sequential(
             nn.Conv2d(3, 8, 3, stride=2),
@@ -62,17 +61,12 @@ class Supernets(nn.Module):
                 self.blocks.append(inverted_residual_block)
                 input_channel = output_channel
 
-        # feature mix layer
-        self.feature_mix_layer = nn.Sequential(
-            nn.Conv2d(128, 400, 1),
-            nn.BatchNorm2d(400),
-            nn.ReLU6(inplace=True)
-        )
         # average pooling
         self.gap = nn.AdaptiveAvgPool2d(1)
+        self.bn2 = nn.BatchNorm2d(128)
 
         # Linear Classifier
-        self.classifier = nn.Linear(400, 10)
+        self.classifier = nn.Linear(128, 10)
 
         self.init_modules()
         self.init_parameters()
@@ -81,8 +75,8 @@ class Supernets(nn.Module):
         x = self.first_conv(x)
         for block in self.blocks:
             x = block(x)
-        x = self.feature_mix_layer(x)
         x = self.gap(x)
+        x = self.bn2(x)
         x = x.view(x.size(0), -1)  # flatten
         x = self.classifier(x)
         return x
@@ -127,7 +121,7 @@ class Supernets(nn.Module):
     def unused_modules_off(self):
         for m in self.redundant_modules:
             unused = {}
-            if self.MODE == "NORMAL":
+            if MixedEdge.MODE == 'NORMAL':
                 involved_index = m.active_index + m.inactive_index
             else:
                 involved_index = m.active_index

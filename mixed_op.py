@@ -27,6 +27,7 @@ def build_candidate_ops(candidate_ops, in_channels, out_channels, stride):
 
 
 class MixedEdge(nn.Module):
+    MODE = 'NORMAL'
     def __init__(self, candidate_ops):
         super(MixedEdge, self).__init__()
 
@@ -75,13 +76,16 @@ class MixedEdge(nn.Module):
     """ """
 
     def forward(self, x):  # 여기가 forward!
-        output = 0
-        for _i in self.active_index:
-            oi = self.candidate_ops[_i](x)
-            output = output + self.AP_path_wb[_i] * oi
-        for _i in self.inactive_index:
-            oi = self.candidate_ops[_i](x)
-            output = output + self.AP_path_wb[_i] * oi.detach()
+        if MixedEdge.MODE == 'None':
+            output = self.candidate_ops[self.active_index[0]](x)
+        else:
+            output = 0
+            for _i in self.active_index:
+                oi = self.candidate_ops[_i](x)
+                output = output + self.AP_path_wb[_i] * oi
+            for _i in self.inactive_index:
+                oi = self.candidate_ops[_i](x)
+                output = output + self.AP_path_wb[_i] * oi.detach()
         return output
 
     """ """
@@ -104,7 +108,11 @@ class MixedEdge(nn.Module):
         self.inactive_index = [index_inactive]
         # set binary gate
         self.AP_path_wb.data[index_active] = 1.0
-
+        # avoid over-regularization
+        for i in range(self.n_choices):
+            for name, param in self.candidate_ops[i].named_parameters():
+                param.grad = None
+                
     def delta_ij(self, i, j):
         if i == j:
             return 1
@@ -130,22 +138,12 @@ class MixedEdge(nn.Module):
                 self.AP_path_alpha.grad.data[origin_i] += \
                     binary_grads[origin_j] * probs[j] * \
                     (self.delta_ij(i, j) - probs[i])
-        for i, idx in enumerate(self.active_index):
-            # ex) self.active_index[0] = (3, 0.14301)
-            self.active_index[i] = (
-                idx, self.AP_path_alpha.data[idx].item())
-        for i, idx in enumerate(self.inactive_index):
-            # ex) self.inactive_index[0] = (1, 0.2313)
-            self.inactive_index[i] = (
-                idx, self.AP_path_alpha.data[idx].item())
 
     def rescale_updated_arch_param(self):
         # ex) self.active_index[0] = (3, 0.14301)
-        involved_idx = [idx for idx, _ in (
-            self.active_index + self.inactive_index)]  # ex) [3, 1]
+        involved_idx = self.active_index + self.inactive_index  # ex) [3, 1]
         # ex) [0.14301, 0.2313]
-        old_alphas = [alpha for _, alpha in (
-            self.active_index + self.inactive_index)]
+        old_alphas = [self.AP_path_alpha.data[self.active_index].item()] + [self.AP_path_alpha.data[self.inactive_index].item()]
 
         # ex) [tensor(0.1400), tensor(0.1200)] when AP_path_alpha = Parameter(torch.Tensor([0.1, 0.12, 0.13, 0.14]))
         new_alphas = [self.AP_path_alpha.data[idx] for idx in involved_idx]
