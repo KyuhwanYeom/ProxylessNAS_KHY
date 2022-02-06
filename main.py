@@ -95,6 +95,6 @@ end = time.time()
 ################################################
 # train model
 Model_train(Trained.net, trainloader, validloader,
-            testloader, Trained.optimizer_weight)
+            testloader, Trained.optimizer_weight, best_acc, start_epoch)
 
 print(f"{end - start:.5f} sec")

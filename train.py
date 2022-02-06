@@ -38,9 +38,9 @@ class train():
         self.net = nn.DataParallel(self.net)  # dataparallel
         cudnn.benchmark = True
         
-    def warm_up(self, warmup_epochs=50):
+    def warm_up(self, warmup_epochs=0):
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optimizer_weight, T_0=warmup_epochs + 1, T_mult=1, eta_min=1e-4)  # cosine annealing
+            self.optimizer_weight, T_0=warmup_epochs + 1, T_mult=1, eta_min=0.03)  # cosine annealing
         for epoch in range(self.start_epoch, warmup_epochs):
             print('\n', '-' * 30, 'Warmup epoch: %d' %
                   (epoch + 1), '-' * 30, '\n')
@@ -79,8 +79,7 @@ class train():
                         'warm_up loss', loss.item(), epoch*len(self.trainloader) + i)
                     self.writer.add_scalar('warm-up_top-1 acc', top1.val,
                                            epoch*len(self.trainloader) + i)
-                    self.writer.add_scalar('warm-up_top-5 acc', top5.val,
-                                           epoch*len(self.trainloader) + i)
+
 
                 self.optimizer_weight.step()  # update weight parameters
                 # unused modules back(복귀)
@@ -92,7 +91,7 @@ class train():
             warmup = epoch + 1 < warmup_epochs
             
             self.write_file(epoch+1, losses, top1, top5, scheduler.get_last_lr()[0]) # 기록 저장
-            (val_loss, val_top1, val_top5) = self.validate()  # validation 진행
+            (val_loss, val_top1, val_top5) = self.validate(epoch)  # validation 진행
             
             print(f'learning rate : {scheduler.get_last_lr()[0]}')
             
@@ -113,13 +112,13 @@ class train():
                 })
                 self.best_acc = val_top1
                 
-        return scheduler.get_lr()[0]
+        return scheduler.get_last_lr()[0]
 
-    def train(self, init_lr, train_epochs=50):
+    def train(self, init_lr, train_epochs=1):
         self.optimizer_weight = optim.SGD(
             self.net.module.weight_params, lr=init_lr, momentum=0.9)  # optimizer 재설정
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optimizer_weight, T_0=train_epochs+1, T_mult=1, eta_min=1e-5)  # cosine annealing
+            self.optimizer_weight, T_0=train_epochs+1, T_mult=1, eta_min=1e-2)  # cosine annealing
         for epoch in range(self.start_epoch, train_epochs):
             print('\n', '-' * 30, 'Train epoch: %d' %
                   (epoch + 1), '-' * 30, '\n')
@@ -167,8 +166,7 @@ class train():
                         'train loss', loss.item(), epoch*len(self.trainloader) + i)
                     self.writer.add_scalar('train_top-1 acc', top1.val,
                                            epoch*len(self.trainloader) + i)
-                    self.writer.add_scalar('train_top-5 acc', top5.val,
-                                           epoch*len(self.trainloader) + i)
+
                 progress_bar(i, len(self.trainloader), 'Train Loss: %.3f | Top-1 Acc: %.3f%% | Top-5 Acc: %.3f%%'
                              % (losses.avg, top1.avg, top5.avg))
             self.train_MODE = 'True'
@@ -176,7 +174,7 @@ class train():
             self.write_file(epoch + 1, losses, top1, top5, scheduler.get_last_lr()[0])
             print(f'learning rate : {scheduler.get_last_lr()[0]}')
 
-            (val_loss, val_top1, val_top5) = self.validate()  # validation 진행
+            (val_loss, val_top1, val_top5) = self.validate(epoch)  # validation 진행
             self.train_MODE = 'False'
             if val_top1 > self.best_acc :
                 self.save_model({
@@ -205,7 +203,7 @@ class train():
         print(
             f'Accuracy of the network on the 10000 test images: {100 * correct // total} %')
 
-    def validate(self):
+    def validate(self, epoch):
         if self.train_MODE == 'True':
             MixedEdge.MODE = 'None'
         self.net.eval()
@@ -231,6 +229,14 @@ class train():
                 losses.update(loss, images.size(0))
                 top1.update(acc1[0], images.size(0))
                 top5.update(acc5[0], images.size(0))
+                # write in tensorboard
+                if i % 5 == 0:
+                    # print(loss.item())
+                    self.writer.add_scalar(
+                        'val loss', loss.item(), epoch*len(self.validloader) + i)
+                    self.writer.add_scalar('val_top-1 acc', top1.val,
+                                           epoch*len(self.validloader) + i)
+
                 progress_bar(i, len(self.validloader), 'Valid Loss: %.3f | Top-1 Acc: %.3f%% | Top-5 Acc: %.3f%%'
                              % (losses.avg, top1.avg, top5.avg))
         
