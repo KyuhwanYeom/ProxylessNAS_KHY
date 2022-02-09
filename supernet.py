@@ -2,6 +2,7 @@ import torch.nn as nn
 import time
 from utils import *
 from mixed_op import *
+from queue import Queue
 
 
 class MobileInvertedResidualBlock(nn.Module):
@@ -33,13 +34,13 @@ class Supernets(nn.Module):
         self.model_init = 'he fout'
         # first conv layer
         self.first_conv = nn.Sequential(
-            nn.Conv2d(3, 8, 3, stride=2),
-            nn.BatchNorm2d(8),
+            nn.Conv2d(3, 32, 3, stride=2),
+            nn.BatchNorm2d(32),
             nn.ReLU6()
         )
 
-        input_channel = 8
-
+        input_channel = 32
+        
         # blocks
         self.blocks = nn.ModuleList()
         for output_channel in output_channels:
@@ -61,12 +62,21 @@ class Supernets(nn.Module):
                 self.blocks.append(inverted_residual_block)
                 input_channel = output_channel
 
+        # feature_mix_layer
+        self.feature_mix_layer = nn.Sequential(
+            nn.Conv2d(128, 1280, 1, stride=1),
+            nn.BatchNorm2d(1280),
+            nn.ReLU6()
+        )
+        
         # average pooling
         self.gap = nn.AdaptiveAvgPool2d(1)
-        self.bn2 = nn.BatchNorm2d(128)
-
+        
         # Linear Classifier
-        self.classifier = nn.Linear(128, 10)
+        self.classifier = nn.Sequential(
+            nn.Dropout(inplace=True),
+            nn.Linear(1280, 10)
+        )
 
         self.init_modules()
         self.init_parameters()
@@ -75,8 +85,8 @@ class Supernets(nn.Module):
         x = self.first_conv(x)
         for block in self.blocks:
             x = block(x)
+        x = self.feature_mix_layer(x)
         x = self.gap(x)
-        x = self.bn2(x)
         x = x.view(x.size(0), -1)  # flatten
         x = self.classifier(x)
         return x
@@ -109,7 +119,7 @@ class Supernets(nn.Module):
         self.init_weight(self.model_init)
         for params in self.named_parameters():
             if 'AP_path_alpha' in params[0]:
-                params[1].data.normal_(0, 1e+1)
+                params[1].data.normal_(0, 1e-3)
                 self.arch_params.append(params[1])
             else:
                 self.weight_params.append(params[1])
@@ -148,3 +158,17 @@ class Supernets(nn.Module):
     def rescale_updated_arch_param(self):
         for m in self.redundant_modules:
             m.rescale_updated_arch_param()
+
+    def convert_to_normal_net(self):
+        queue = Queue()
+        queue.put(self)
+        while not queue.empty():
+            module = queue.get()
+            for m in module._modules:
+                child = module._modules[m]
+                if child is None:
+                    continue
+                if child.__str__().startswith('MixedEdge'):
+                    module._modules[m] = child.chosen_op
+                else:
+                    queue.put(child)

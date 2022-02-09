@@ -29,7 +29,6 @@ class train():
         if is_warmup == True:
             self.lr = self.warm_up()
         self.train(self.lr)
-        self.test()
         
     def multiGPU(self):
         self.device = torch.device(
@@ -38,7 +37,7 @@ class train():
         self.net = nn.DataParallel(self.net)  # dataparallel
         cudnn.benchmark = True
         
-    def warm_up(self, warmup_epochs=0):
+    def warm_up(self, warmup_epochs=40):
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer_weight, T_0=warmup_epochs + 1, T_mult=1, eta_min=0.03)  # cosine annealing
         for epoch in range(self.start_epoch, warmup_epochs):
@@ -114,7 +113,7 @@ class train():
                 
         return scheduler.get_last_lr()[0]
 
-    def train(self, init_lr, train_epochs=1):
+    def train(self, init_lr, train_epochs=10):
         self.optimizer_weight = optim.SGD(
             self.net.module.weight_params, lr=init_lr, momentum=0.9)  # optimizer 재설정
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
@@ -156,7 +155,7 @@ class train():
                 # unused modules back
                 self.net.module.unused_modules_back()
                 # skip architecture parameter updates in the first epoch
-                if epoch > 0 and i % 6 == 0:
+                if epoch > 0 and i % 6 ==0 :
                     # update architecture parameters
                     arch_loss = self.gradient_step()  # gradient update
                 # write in tensorboard
@@ -173,6 +172,12 @@ class train():
             scheduler.step()
             self.write_file(epoch + 1, losses, top1, top5, scheduler.get_last_lr()[0])
             print(f'learning rate : {scheduler.get_last_lr()[0]}')
+            
+            print_epoch = f"----------------------epoch : {epoch + 1}----------------------\n"
+            #self.write_archnet(print_epoch)
+            #for idx, block in enumerate(self.net.blocks):
+            #    statement = f"{idx}. {block.module_str}"
+            #    self.write_archnet(statement)
 
             (val_loss, val_top1, val_top5) = self.validate(epoch)  # validation 진행
             self.train_MODE = 'False'
@@ -186,33 +191,18 @@ class train():
                     'net': self.net.state_dict(),
                 })
                 self.best_acc = val_top1
-
-    def test(self):
-        correct = 0
-        total = 0
-        with torch.no_grad():
-            for data in self.testloader:
-                images, labels = data[0].to(
-                    self.device), data[1].to(self.device)
-                # 신경망에 이미지를 통과시켜 출력을 계산
-                outputs = self.net(images)
-                # 가장 높은 값(energy)를 갖는 분류(class)를 정답으로 선택
-                _, predicted = torch.max(outputs.data, 1)
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
-        print(
-            f'Accuracy of the network on the 10000 test images: {100 * correct // total} %')
+        # convert to normal network according to architecture parameters         
+        self.net.module.cpu().convert_to_normal_net()
 
     def validate(self, epoch):
         if self.train_MODE == 'True':
             MixedEdge.MODE = 'None'
-        self.net.eval()
         # set chosen op active
         self.net.module.set_chosen_op_active()  # super_proxyless.py 175번째줄
         # remove unused modules
         self.net.module.unused_modules_off()
 
-        # self.net.eval()
+        self.net.eval()
         losses = AverageMeter()
         top1 = AverageMeter()
         top5 = AverageMeter()
@@ -246,6 +236,11 @@ class train():
         
         return losses.avg, top1.avg, top5.avg
 
+    def write_archnet(self, statement):
+        logfile = os.path.join("./output", 'archnet.txt')
+        with open(logfile, 'a') as fout:
+            fout.write(statement)
+        
     def write_file(self, epoch, losses, top1, top5, lr):
         logfile = os.path.join("./output", 'out.txt')
         print_epoch = f"----------------------epoch : {epoch}----------------------\n"

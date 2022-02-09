@@ -25,7 +25,6 @@ class Model_train():
         self.multiGPU()
         
         self.train()
-        self.validate()
         self.test()
 
     def multiGPU(self):
@@ -34,10 +33,11 @@ class Model_train():
         self.net.to(self.device)
 
     def train(self, train_epochs=200):
-        nBatch = len(self.trainloader)
-        self.optimizer_weight.param_groups[0]['lr'] = 0.01
+        self.net.train()
+        self.optimizer_weight = optim.SGD(
+            self.net.module.weight_params, lr=0.05, momentum=0.9)  # optimizer 재설정
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            self.optimizer_weight, T_0=train_epochs + 1, T_mult=1, eta_min=1e-3)  # cosine annealing
+            self.optimizer_weight, T_0=train_epochs + 1, T_mult=1, eta_min=1e-4)  # cosine annealing
         for epoch in range(self.start_epoch, train_epochs):
             print('\n', '-' * 30, 'epoch: %d' %
                   (epoch + 1), '-' * 30, '\n')
@@ -118,11 +118,12 @@ class Model_train():
         return valid_res
 
     def validate_validloader(self, epoch):
-        self.net.eval()
         losses = AverageMeter()
         top1 = AverageMeter()
         top5 = AverageMeter()
-
+        
+        self.net.eval()
+        
         with torch.no_grad():
             for i, (images, labels) in enumerate(self.validloader):
                 images, labels = images.to(self.device), labels.to(self.device)

@@ -9,6 +9,7 @@
             "type": "python",
             "request": "launch",
             "program": "${file}",
+            "env": {"name": "CUDA_VISIBLE_DEVICES","value": "0"},
             "console": "integratedTerminal"
         }
     ]

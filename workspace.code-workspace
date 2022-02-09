@@ -5,6 +5,12 @@
 		},
 		{
 			"path": "."
+		},
+		{
+			"path": "../proxylessnas"
+		},
+		{
+			"path": "../proxylessnas_other/ProxylessNAS"
 		}
 	],
 	"settings": {}

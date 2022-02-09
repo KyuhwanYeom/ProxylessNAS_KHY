@@ -9,6 +9,7 @@ from layers import *
 OPS = {
     'Identity': lambda in_C, out_C, S: Identity(in_C, out_C),
     'Zero': lambda in_C, out_C, S: Zero(stride=S),
+    '3x3_MBConv1': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 1),
     '3x3_MBConv3': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 3),
     '3x3_MBConv6': lambda in_C, out_C, S: MBInvertedConvLayer(in_C, out_C, 3, S, 6),
     #######################################################################################
