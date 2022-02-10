@@ -29,6 +29,7 @@ def build_candidate_ops(candidate_ops, in_channels, out_channels, stride):
 
 class MixedEdge(nn.Module):
     MODE = 'NORMAL'
+
     def __init__(self, candidate_ops):
         super(MixedEdge, self).__init__()
 
@@ -70,9 +71,11 @@ class MixedEdge(nn.Module):
         chosen_idx, _ = self.chosen_index
         # inactive_index는 active index 제외 모두 (validate 이전의 초기화 부분에서는 inactive_index도 단 한개!)
         self.active_index = [chosen_idx]
-        self.inactive_index = [_i for _i in range(0, chosen_idx)] + \
-                              [_i for _i in range(
+        self.inactive_index = [i for i in range(0, chosen_idx)] + \
+                              [i for i in range(
                                   chosen_idx + 1, self.n_choices)]
+        print(self.inactive_index)
+        print(self.AP_path_wb)
 
     """ """
 
@@ -81,12 +84,11 @@ class MixedEdge(nn.Module):
             output = self.candidate_ops[self.active_index[0]](x)
         else:
             output = 0
-            for _i in self.active_index:
-                oi = self.candidate_ops[_i](x)
-                output = output + self.AP_path_wb[_i] * oi
-            for _i in self.inactive_index:
-                oi = self.candidate_ops[_i](x)
-                output = output + self.AP_path_wb[_i] * oi.detach()
+            output = output + self.candidate_ops[self.active_index[0]](x)
+            for i in self.inactive_index:
+                output = output + \
+                    self.AP_path_wb[i] * self.candidate_ops[i](x).detach()
+
         return output
 
     """ """
@@ -113,7 +115,7 @@ class MixedEdge(nn.Module):
         for i in range(self.n_choices):
             for name, param in self.candidate_ops[i].named_parameters():
                 param.grad = None
-                
+
     def delta_ij(self, i, j):
         if i == j:
             return 1
@@ -144,7 +146,8 @@ class MixedEdge(nn.Module):
         # ex) self.active_index[0] = (3, 0.14301)
         involved_idx = self.active_index + self.inactive_index  # ex) [3, 1]
         # ex) [0.14301, 0.2313]
-        old_alphas = [self.AP_path_alpha.data[self.active_index].item()] + [self.AP_path_alpha.data[self.inactive_index].item()]
+        old_alphas = [self.AP_path_alpha.data[self.active_index].item(
+        )] + [self.AP_path_alpha.data[self.inactive_index].item()]
 
         # ex) [tensor(0.1400), tensor(0.1200)] when AP_path_alpha = Parameter(torch.Tensor([0.1, 0.12, 0.13, 0.14]))
         new_alphas = [self.AP_path_alpha.data[idx] for idx in involved_idx]

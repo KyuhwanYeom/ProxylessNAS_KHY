@@ -1,5 +1,6 @@
 import torch.nn as nn
 import time
+from normal_net import NormalNets
 from utils import *
 from mixed_op import *
 from queue import Queue
@@ -21,17 +22,18 @@ class MobileInvertedResidualBlock(nn.Module):
         return self.mobile_inverted_conv(x) + skip
 
 
-class Supernets(nn.Module):
+class SuperNets(nn.Module):
 
     def __init__(self, output_channels, conv_candidates,
                  n_classes=10, width_mult=1, bn_param=(0.1, 1e-3), dropout_rate=0, n_cell=3):
-        super(Supernets, self).__init__()
+        super().__init__()
         self.redundant_modules = []
         self.unused_modules = []
         self.label_smoothing = True
         self.arch_params = []
         self.weight_params = []
         self.model_init = 'he fout'
+
         # first conv layer
         self.first_conv = nn.Sequential(
             nn.Conv2d(3, 32, 3, stride=2),
@@ -40,9 +42,16 @@ class Supernets(nn.Module):
         )
 
         input_channel = 32
-        
+
+        first_block_conv = MixedEdge(candidate_ops=build_candidate_ops(
+            ['3x3_MBConv1'], input_channel, 16, 1))
+        first_block = MobileInvertedResidualBlock(first_block_conv, False)
+        input_channel = 16
+
         # blocks
         self.blocks = nn.ModuleList()
+        self.blocks.append(first_block)
+
         for output_channel in output_channels:
             for i in range(n_cell):
                 stride = 2 if i == 0 else 1
@@ -68,15 +77,18 @@ class Supernets(nn.Module):
             nn.BatchNorm2d(1280),
             nn.ReLU6()
         )
-        
+
         # average pooling
         self.gap = nn.AdaptiveAvgPool2d(1)
-        
+
         # Linear Classifier
         self.classifier = nn.Sequential(
             nn.Dropout(inplace=True),
             nn.Linear(1280, 10)
         )
+
+        # super(SuperNets, self).__init__(self.first_conv,
+        #                                self.blocks, self.feature_mix_layer, self.classifier)
 
         self.init_modules()
         self.init_parameters()
@@ -119,7 +131,7 @@ class Supernets(nn.Module):
         self.init_weight(self.model_init)
         for params in self.named_parameters():
             if 'AP_path_alpha' in params[0]:
-                params[1].data.normal_(0, 1e-3)
+                params[1].data.normal_(0, 1e+1)
                 self.arch_params.append(params[1])
             else:
                 self.weight_params.append(params[1])
@@ -172,3 +184,4 @@ class Supernets(nn.Module):
                     module._modules[m] = child.chosen_op
                 else:
                     queue.put(child)
+        return Normalnets(self.first_conv, list(self.blocks), self.feature_mix_layer, self.classifier)
