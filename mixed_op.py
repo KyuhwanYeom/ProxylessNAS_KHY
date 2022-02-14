@@ -28,7 +28,7 @@ def build_candidate_ops(candidate_ops, in_channels, out_channels, stride):
 
 
 class MixedEdge(nn.Module):
-    MODE = 'NORMAL'
+    MODE = None
 
     def __init__(self, candidate_ops):
         super(MixedEdge, self).__init__()
@@ -67,6 +67,9 @@ class MixedEdge(nn.Module):
         """ assume only one path is active """
         return self.candidate_ops[self.active_index[0]]
 
+    def is_zero_layer(self):
+        return self.active_op.is_zero_layer()
+
     def set_chosen_op_active(self):  # validate 할 때 쓰임 (맨마지막!!!!!)
         chosen_idx, _ = self.chosen_index
         # inactive_index는 active index 제외 모두 (validate 이전의 초기화 부분에서는 inactive_index도 단 한개!)
@@ -74,14 +77,12 @@ class MixedEdge(nn.Module):
         self.inactive_index = [i for i in range(0, chosen_idx)] + \
                               [i for i in range(
                                   chosen_idx + 1, self.n_choices)]
-        print(self.inactive_index)
-        print(self.AP_path_wb)
 
     """ """
 
     def forward(self, x):  # 여기가 forward!
-        if MixedEdge.MODE == 'None':
-            output = self.candidate_ops[self.active_index[0]](x)
+        if MixedEdge.MODE == None:
+            output = self.active_op(x)
         else:
             output = 0
             output = output + self.candidate_ops[self.active_index[0]](x)
@@ -97,20 +98,31 @@ class MixedEdge(nn.Module):
         # reset binary gates
         self.AP_path_wb.data.zero_()
         # binarize according to probs
-        probs = F.softmax(self.AP_path_alpha, dim=0)
-        # sample two ops according to `probs`
-        sample_op = torch.multinomial(probs, 2, replacement=False)
-        index_active = sample_op[0].item()
-        index_inactive = sample_op[1].item()
-        # big one is active, small one is inactive
-        if(probs[index_active] <= probs[index_inactive]):
-            tmp = index_active
-            index_active = index_inactive
-            index_inactive = tmp
-        self.active_index = [index_active]
-        self.inactive_index = [index_inactive]
-        # set binary gate
-        self.AP_path_wb.data[index_active] = 1.0
+        probs = self.probs_over_ops
+        if MixedEdge.MODE == None:
+            sample = torch.multinomial(probs.data, 1)[0].item()
+            self.active_index = [sample]
+            self.inactive_index = [_i for _i in range(0, sample)] + \
+                                  [_i for _i in range(
+                                      sample + 1, self.n_choices)]
+            self.log_prob = torch.log(probs[sample])
+            self.current_prob_over_ops = probs
+            # set binary gate
+            self.AP_path_wb.data[sample] = 1.0
+        else:
+            # sample two ops according to `probs`
+            sample_op = torch.multinomial(probs, 2, replacement=False)
+            index_active = sample_op[0].item()
+            index_inactive = sample_op[1].item()
+            # big one is active, small one is inactive
+            if(probs[index_active] <= probs[index_inactive]):
+                tmp = index_active
+                index_active = index_inactive
+                index_inactive = tmp
+            self.active_index = [index_active]
+            self.inactive_index = [index_inactive]
+            # set binary gate
+            self.AP_path_wb.data[index_active] = 1.0
         # avoid over-regularization
         for i in range(self.n_choices):
             for name, param in self.candidate_ops[i].named_parameters():

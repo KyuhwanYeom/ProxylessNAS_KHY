@@ -10,12 +10,14 @@ class MBInvertedConvLayer(nn.Module):
 
         feature_dim = round(in_channels * expand_ratio)
         pad = kernel_size // 2
+        self.expand_ratio = expand_ratio
 
-        self.inverted_bottleneck = nn.Sequential(
-            nn.Conv2d(in_channels, feature_dim, 1, 1, 0, bias=False),
-            nn.BatchNorm2d(feature_dim),
-            nn.ReLU6(inplace=True),
-        )
+        if expand_ratio != 1:
+            self.inverted_bottleneck = nn.Sequential(
+                nn.Conv2d(in_channels, feature_dim, 1, 1, 0, bias=False),
+                nn.BatchNorm2d(feature_dim),
+                nn.ReLU6(inplace=True),
+            )
 
         self.depth_conv = nn.Sequential(
             nn.Conv2d(feature_dim, feature_dim, kernel_size,
@@ -30,7 +32,8 @@ class MBInvertedConvLayer(nn.Module):
         )
 
     def forward(self, x):
-        x = self.inverted_bottleneck(x)
+        if self.expand_ratio != 1:
+            x = self.inverted_bottleneck(x)
         x = self.depth_conv(x)
         x = self.point_linear(x)
         return x

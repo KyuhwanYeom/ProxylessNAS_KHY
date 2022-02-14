@@ -1,1 +1,1 @@
-./output/checkpoint.pth
+./output/final.pth

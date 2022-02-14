@@ -36,16 +36,19 @@ class SuperNets(nn.Module):
 
         # first conv layer
         self.first_conv = nn.Sequential(
-            nn.Conv2d(3, 32, 3, stride=2),
+            nn.Conv2d(3, 32, 3, stride=1),
             nn.BatchNorm2d(32),
             nn.ReLU6()
         )
 
         input_channel = 32
-
+        self.shortcut = False
         first_block_conv = MixedEdge(candidate_ops=build_candidate_ops(
             ['3x3_MBConv1'], input_channel, 16, 1))
-        first_block = MobileInvertedResidualBlock(first_block_conv, False)
+        if first_block_conv.n_choices == 1:
+            first_block_conv = first_block_conv.candidate_ops[0]
+        first_block = MobileInvertedResidualBlock(
+            first_block_conv, self.shortcut)
         input_channel = 16
 
         # blocks
@@ -131,7 +134,7 @@ class SuperNets(nn.Module):
         self.init_weight(self.model_init)
         for params in self.named_parameters():
             if 'AP_path_alpha' in params[0]:
-                params[1].data.normal_(0, 1e+1)
+                params[1].data.normal_(0, 1e-3)
                 self.arch_params.append(params[1])
             else:
                 self.weight_params.append(params[1])
@@ -143,10 +146,10 @@ class SuperNets(nn.Module):
     def unused_modules_off(self):
         for m in self.redundant_modules:
             unused = {}
-            if MixedEdge.MODE == 'NORMAL':
-                involved_index = m.active_index + m.inactive_index
-            else:
+            if MixedEdge.MODE == None:
                 involved_index = m.active_index
+            else:
+                involved_index = m.active_index + m.inactive_index
             for i in range(m.n_choices):  # n_choices : candiate path의 개수
                 if i not in involved_index:
                     unused[i] = m.candidate_ops[i]
@@ -184,4 +187,4 @@ class SuperNets(nn.Module):
                     module._modules[m] = child.chosen_op
                 else:
                     queue.put(child)
-        return Normalnets(self.first_conv, list(self.blocks), self.feature_mix_layer, self.classifier)
+        return NormalNets(self.first_conv, list(self.blocks), self.feature_mix_layer, self.classifier)

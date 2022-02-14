@@ -42,6 +42,7 @@ class train():
         scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
             self.optimizer_weight, T_0=warmup_epochs + 1, T_mult=1, eta_min=0.03)  # cosine annealing
         for epoch in range(self.start_epoch, warmup_epochs):
+            self.write_latest_archnet()
             print('\n', '-' * 30, 'Warmup epoch: %d' %
                   (epoch + 1), '-' * 30, '\n')
             losses = AverageMeter()
@@ -199,13 +200,14 @@ class train():
         self.save_final_model({
             'weight_optimizer': self.optimizer_weight.state_dict(),
             'arch_optimizer': self.optimizer_alpha.state_dict(),
-            'net': self.normalnet.state_dict(),
+            'net': self.net.state_dict(),
         })
-        print(self.normalnet)
+        for m in self.net.modules():
+            print(m)
 
     def validate(self, epoch):
         if self.train_MODE == 'True':
-            MixedEdge.MODE = 'None'
+            MixedEdge.MODE = None
         # set chosen op active
         self.net.module.set_chosen_op_active()  # super_proxyless.py 175번째줄
         # remove unused modules
@@ -244,6 +246,12 @@ class train():
         self.write_file_valid(losses, top1, top5)
 
         return losses.avg, top1.avg, top5.avg
+
+    def write_latest_archnet(self):
+        logfile = os.path.join("./output", 'archnet.txt')
+        statement = f"{self.net}"
+        with open(logfile, 'w') as fout:
+            fout.write(statement)
 
     def write_archnet(self, statement):
         logfile = os.path.join("./output", 'archnet.txt')

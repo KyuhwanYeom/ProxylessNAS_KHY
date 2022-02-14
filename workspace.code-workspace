@@ -1,16 +1,10 @@
 {
 	"folders": [
 		{
-			"path": "../practice"
-		},
-		{
 			"path": "."
 		},
 		{
-			"path": "../proxylessnas"
-		},
-		{
-			"path": "../proxylessnas_other/ProxylessNAS"
+			"path": "../DANCE/proxylessnas_for_DANCE"
 		}
 	],
 	"settings": {}
