@@ -2,9 +2,6 @@
 	"folders": [
 		{
 			"path": "."
-		},
-		{
-			"path": "../DANCE/proxylessnas_for_DANCE"
 		}
 	],
 	"settings": {}

@@ -1,1 +1,1 @@
-./output/final.pth
+./output/train_checkpoint.pth

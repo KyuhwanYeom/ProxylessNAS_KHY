@@ -1,6 +1,6 @@
 import torch.nn as nn
+from utils import *
 from collections import OrderedDict
-
 
 class MBInvertedConvLayer(nn.Module):
 
@@ -8,31 +8,48 @@ class MBInvertedConvLayer(nn.Module):
                  kernel_size, stride, expand_ratio):
         super(MBInvertedConvLayer, self).__init__()
 
-        feature_dim = round(in_channels * expand_ratio)
         pad = kernel_size // 2
         self.expand_ratio = expand_ratio
 
-        if expand_ratio != 1:
+        if expand_ratio > 1:
+            feature_dim = round(in_channels * expand_ratio)
             self.inverted_bottleneck = nn.Sequential(
                 nn.Conv2d(in_channels, feature_dim, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(feature_dim),
-                nn.ReLU6(inplace=True),
+                nn.BatchNorm2d(feature_dim, eps=1e-3),
+                nn.ReLU(inplace=True),
             )
+        else:
+            feature_dim = in_channels
+            self.inverted_bottleneck = None
 
         self.depth_conv = nn.Sequential(
             nn.Conv2d(feature_dim, feature_dim, kernel_size,
                       stride, pad, groups=feature_dim, bias=False),
-            nn.BatchNorm2d(feature_dim),
-            nn.ReLU6(inplace=True),
+            nn.BatchNorm2d(feature_dim, eps=1e-3),
+            nn.ReLU(inplace=True),
         )
 
         self.point_linear = nn.Sequential(
             nn.Conv2d(feature_dim, out_channels, 1, 1, 0, bias=False),
-            nn.BatchNorm2d(out_channels),
+            nn.BatchNorm2d(out_channels, eps=1e-3),
         )
 
+    def get_flops(self, x):
+        if self.inverted_bottleneck is not None:
+            flop1 = count_conv_flop(self.inverted_bottleneck[0], x)
+            x = self.inverted_bottleneck(x)
+        else:
+            flop1 = 0
+
+        flop2 = count_conv_flop(self.depth_conv[0], x)
+        x = self.depth_conv(x)
+
+        flop3 = count_conv_flop(self.point_linear[0], x)
+        x = self.point_linear(x)
+        return flop1 + flop2 + flop3, x
+
     def forward(self, x):
-        if self.expand_ratio != 1:
+        if self.expand_ratio > 1:
             x = self.inverted_bottleneck(x)
         x = self.depth_conv(x)
         x = self.point_linear(x)
@@ -47,6 +64,10 @@ class Identity(nn.Module):
     def forward(self, x):
         return x
 
+    def get_flops(self, x):
+        return 0, self.forward(x)
+
+
 
 class Zero(nn.Module):
 
@@ -58,3 +79,7 @@ class Zero(nn.Module):
         if self.stride == 1:
             return x.mul(0.)
         return x[:, :, ::self.stride, ::self.stride].mul(0.)
+
+    def get_flops(self, x):
+        return 0, self.forward(x)
+
